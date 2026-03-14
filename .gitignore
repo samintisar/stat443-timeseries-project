@@ -1,0 +1,41 @@
+# R session and history
+.Rhistory
+.Rapp.history
+.RData
+.RDataTmp
+*.Rproj.user/
+
+# RStudio (keep .Rproj for shared project; ignore user-specific)
+.Ruserdata
+.Rproj.user/
+
+# Knitr / R Markdown cache and intermediates
+*_cache/
+/cache/
+*.utf8.md
+*.knit.md
+
+# Build and check
+/*.tar.gz
+/*.Rcheck/
+
+# Credentials and deployment
+.httr-oauth
+.Renviron
+rsconnect/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Logs and temp
+*.log
+*.tmp
+*.temp
+~$*
