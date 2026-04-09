@@ -8,38 +8,38 @@ auto_model <- auto.arima(sales_ts)
 summary(auto_model)
 ```
 
-The automated model selection procedure identified **ARIMA(4,0,2)(0,1,1)[7]** as the initial candidate based on AIC minimization.  
+Automated model selection using auto_model identified **ARIMA(4,0,2)(0,1,1)[7]** as the initial candidate based on AIC minimization.  
 
-The specification indicates:
+It indicates that there's: 
 - No non-seasonal differencing ($d=0$), consistent with prior stationarity tests  
 - One seasonal difference ($D=1$) to account for weekly patterns  
 - Significant autoregressive structure at lower lags, with diminishing contributions at higher lags  
 
-Coefficient estimates suggest that the first two autoregressive terms contribute most strongly, while higher-order terms are relatively small.
+Also, the coeffieicnet estimates suggest that the first two autoregressive terms contribute most strongly, while higher-order terms don't have much of an impact. 
 
-Training performance metrics indicate reasonable fit, with low residual autocorrelation (ACF1 ≈ 0) and MASE < 1, suggesting improvement over a naive benchmark.
+Training performance metrics indicate reasonable fit, with pretty low residual autocorrelation (ACF1 ≈ 0) and MASE < 1. 
 
 ---
 
-### Residual Diagnostics
+### Residuals
 
 ```{r}
 checkresiduals(auto_model)
 ```
+We check if the model left any patterns behind in the residuals. If residuals look like random noise, the model did a good job.
 
-Residual diagnostics indicate that while errors are approximately centered and exhibit near-normal behavior, there is evidence of remaining autocorrelation.  
+When we ran checkresiduals, we found that while errors are approximately centered and have a near-normal behavior, there is still some indicators of remaining autocorrelation. Residual ACF shows spikes at seasonal lags (7 and 21), and the Ljung-Box test is statistically significant (p < 0.05) which indicaed that residuals are not fully white noise  This suggests that the baseline model does not fully capture the underlying seasonal structure.
 
-In particular:
-- Residual ACF shows spikes at seasonal lags (7 and 21)  
-- The Ljung-Box test is statistically significant (p < 0.05), indicating that residuals are not fully white noise  
-
-This suggests that the baseline model does not fully capture the underlying seasonal structure.
+**Top plot**: residuals bounce randomly around zero, mostly good, but some large spikes around early 2014 which match the holiday outliers we saw in EDA
+**ACF plot**: a few spikes outside the blue lines, especially around lags 7 and 21, indicating the model hasn't fully captured the weekly pattern
+**Histogram**: roughly bell shaped and centered at zero, meaning errors are fairly normally distributed with no consistent bias in one direction
+**Ljung-Box test result**: p-value = 0.0003958 (less than 0.05) → there is still some remaining pattern in the residuals, which tells us the model could potentially be improved and suggests we can perhaps try alternative models.
 
 ---
 
-### Candidate Model Specification
+### Candidate Models 
 
-Based on residual diagnostics and coefficient significance, several alternative specifications were considered:
+The best AIC model isn't always the best forecasting model. We try variations motivated by our EDA, specifically p=1 and p=2 because our PACF showed spikes at lags 7 and 14. Here are the several alternative candidate modesls we considered:
 
 ```{r}
 model1 <- auto_model
@@ -49,27 +49,24 @@ model4 <- Arima(sales_ts, order=c(2,0,2), seasonal=c(0,1,1))
 model5 <- Arima(sales_ts, order=c(4,0,2), seasonal=c(2,1,1))
 ```
 
-These variations were motivated by:
-- Increasing seasonal MA terms to address residual autocorrelation  
-- Introducing seasonal AR components based on PACF behavior  
-- Reducing non-seasonal AR order due to weak higher-order coefficients  
+The reasons we're trying these different models are: 
+- **Model2**:  ACF of residuals showed spikes at seasonal lags, so we tried increasing Q
+- **Model3**: PACF showed spike at lag 7, suggesting a seasonal AR term P=1 might help
+- **Model4**: ar3 and ar4 coefficients were close to zero, suggesting p=2 might be enough
+- **Model5**: PACF showed spike at lag 14 as well, suggesting P=2 might capture that
 
 ---
 
-### Model Comparison
+### Models Comparison
 
 ```{r}
 AIC(model1, model2, model3, model4, model5)
 ```
 
-| Model | AIC |
-|------|-----|
-| ARIMA(4,0,2)(0,1,1)[7] | 28077.52 |
-| ARIMA(4,0,2)(2,1,1)[7] | 28080.97 |
-| ARIMA(2,0,2)(0,1,1)[7] | 28087.45 |
-| ARIMA(4,0,2)(1,1,1)[7] | 28088.42 |
-| ARIMA(4,0,2)(0,1,2)[7] | 28103.65 |
+ARIMA(4,0,2)(0,1,1)[7]: 28,077.52 (lowest AIC)
+ARIMA(4,0,2)(2,1,1)[7]: 28,080.97
+ARIMA(2,0,2)(0,1,1)[7]: 28,087.45
+ARIMA(4,0,2)(1,1,1)[7]: 28,088.42
+ARIMA(4,0,2)(0,1,2)[7]: 28,103.65
 
-The original specification, **ARIMA(4,0,2)(0,1,1)[7]**, achieved the lowest AIC and is therefore selected as the preferred model within this candidate set.  
-
-However, given the presence of residual autocorrelation, all candidate models are retained for further evaluation using out-of-sample forecast accuracy in the subsequent section.
+The original model, **ARIMA(4,0,2)(0,1,1)[7]** has the lowest AIC. However, given there is residual autocorrelation, best AIC doesn't guarantee best out-of-sample forecasts and accuracy. All candidate models are should still be carried out for RMSE comparison.
