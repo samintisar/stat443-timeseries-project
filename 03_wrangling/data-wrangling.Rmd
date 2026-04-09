@@ -7,9 +7,6 @@ date: "2026-04-07"
 ---
 
 ```{r setup, include=FALSE}
-install.packages("knitr")
-install.packages("tidyverse")
-install.packages("lubridate")
 knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
@@ -43,27 +40,57 @@ df_A <- train %>%
   filter(StoreType == "a", Open == 1) %>%
   mutate(Date = as.Date(Date))
 
-# Aggregate to daily sales
-df_A_daily <- df_A %>%
+# =========================
+# VERSION 1: CLEAN (UNIVARIATE TS)
+# =========================
+df_A_daily_clean <- df_A %>%
   group_by(Date) %>%
-  summarise(Sales = sum(Sales),
-            n_stores = n()) %>%
-  arrange(Date)
-
-# Additional time features
-df_A_daily <- df_A_daily %>%
+  summarise(
+    Sales = sum(Sales),
+    .groups = "drop"
+  ) %>%
+  arrange(Date) %>%
   mutate(
-    Year = lubridate::year(Date),
-    Month = lubridate::month(Date),
-    Week = lubridate::week(Date)
+    Year = year(Date),
+    Month = month(Date),
+    Week = week(Date)
   )
 
-head(df_A_daily)
+head(df_A_daily_clean)
+
+# =========================
+# VERSION 2: WITH EXTERNAL VARIABLES
+# =========================
+df_A_daily_full <- df_A %>%
+  group_by(Date) %>%
+  summarise(
+    Sales = sum(Sales),
+    n_stores = n(),
+    Promo = mean(Promo),
+    SchoolHoliday = mean(SchoolHoliday),
+    StateHoliday = mean(StateHoliday != "0"),
+    .groups = "drop"
+  ) %>%
+  arrange(Date) %>%
+  mutate(
+    Year = year(Date),
+    Month = month(Date),
+    Week = week(Date)
+  )
+
+head(df_A_daily_full)
+
+# =========================
+# SAVE BOTH DATASETS
+# =========================
+write_csv(df_A_daily_clean, "../data/processed/daily_store_a_clean.csv")
+write_csv(df_A_daily_full, "../data/processed/daily_store_a_full.csv")
 ```
+In addition to sales, several time-varying explanatory variables were included. The Promo variable represents the proportion of stores running promotions on a given day, while SchoolHoliday and StateHoliday capture the proportion of stores affected by school and public holidays, respectively. These variables provide additional context for changes in sales beyond purely temporal patterns.
 
 ### Time series object
 ```{r}
-ts_A <- ts(df_A_daily$Sales, frequency = 7)
+ts_A <- ts(df_A_daily_clean$Sales, frequency = 7)
 plot(ts_A)
 ```
 
