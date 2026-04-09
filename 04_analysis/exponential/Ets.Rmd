@@ -1,0 +1,129 @@
+---
+title: "4.2 Exponential Smoothing: Aggregate-Daily"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-04-08"
+---
+
+## Goal
+
+Apply exponential smoothing to the aggregate-daily Rossmann sales series and evaluate its forecasting performance using a holdout set.
+
+We compare the ETS model to the observed holdout period and report holdout RMSE.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+
+```{r}
+library(tidyverse)
+library(forecast)
+
+daily_data <- readr::read_csv(
+  "../../03_wrangling/daily_all_clean.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(
+    Date = as.Date(Date)
+  ) |>
+  dplyr::arrange(Date)
+
+head(daily_data)
+```
+```{r}
+holdout_horizon <- 42
+n_total <- nrow(daily_data)
+n_train <- n_total - holdout_horizon
+
+train_subset <- daily_data |> dplyr::slice(1:n_train)
+holdout_subset <- daily_data |> dplyr::slice((n_train + 1):n_total)
+
+holdout_split <- tibble::tibble(
+  n_total = n_total,
+  n_train = n_train,
+  n_holdout = n_total - n_train,
+  train_start = min(train_subset$Date),
+  train_end = max(train_subset$Date),
+  holdout_start = min(holdout_subset$Date),
+  holdout_end = max(holdout_subset$Date)
+)
+
+holdout_split
+```
+```{r}
+ggplot(daily_data, aes(x = Date, y = Sales)) +
+  geom_line() +
+  labs(
+    title = "Aggregate Daily Sales",
+    x = "Date",
+    y = "Sales"
+  )
+```
+
+```{r}
+sales_ts <- ts(train_subset$Sales, frequency = 7)
+
+sales_ts
+```
+```{r}
+ets_model <- ets(sales_ts)
+
+ets_model
+summary(ets_model)
+```
+
+```{r}
+ets_holdout_fc <- forecast(ets_model, h = holdout_horizon)
+
+holdout_predictions <- tibble::tibble(
+  Date = holdout_subset$Date,
+  actual = holdout_subset$Sales,
+  predicted = as.numeric(ets_holdout_fc$mean)
+)
+
+head(holdout_predictions)
+```
+```{r}
+rmse_vec <- function(actual, pred) {
+  sqrt(mean((actual - pred)^2, na.rm = TRUE))
+}
+
+ets_holdout_rmse <- rmse_vec(
+  actual = holdout_predictions$actual,
+  pred = holdout_predictions$predicted
+)
+
+holdout_rmse_summary <- tibble::tibble(
+  model = "ETS",
+  holdout_rmse = ets_holdout_rmse,
+  n_holdout = nrow(holdout_predictions)
+)
+
+holdout_rmse_summary
+```
+```{r}
+ggplot(holdout_predictions, aes(x = Date)) +
+  geom_line(aes(y = actual, color = "Actual")) +
+  geom_line(aes(y = predicted, color = "Predicted")) +
+  labs(
+    title = "ETS Holdout Forecast vs Actual",
+    x = "Date",
+    y = "Sales",
+    color = "Series"
+  )
+```
+```{r}
+checkresiduals(ets_model)
+```
+
+```{r}
+dir.create("results", showWarnings = FALSE, recursive = TRUE)
+
+readr::write_csv(holdout_split, "results/ets_holdout_split.csv")
+readr::write_csv(holdout_predictions, "results/ets_holdout_predictions.csv")
+readr::write_csv(holdout_rmse_summary, "results/ets_holdout_rmse_summary.csv")
+
+```
+
