@@ -1,0 +1,144 @@
+We’re doing an Exploratory Data Analysis on Store Type “a”. Here are the things we considered when doing Exploratory Data Analysis as we’re trying to understand our data to justify the modelling choices we make later on: 
+
+- **What does the sales data look like? Is it stable, trending up/down, all over the place?
+- Is there a pattern? Do sales repeat weekly, monthly?
+- What affects sales? Does promo, competition, day of week matter?
+- Is the series stationary? To tell us what kind of ARIMA model to use later! 
+
+```{r setup, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(forecast)
+library(tseries)
+train <- read_csv("rossmann-store-sales/train.csv")
+store <- read_csv("rossmann-store-sales/store.csv")
+sales_df <- train %>% left_join(store, by = "Store")
+agg <- sales_df %>%
+  filter(StoreType == "a", Open == 1, Sales > 0) %>%
+  group_by(Date) %>%
+  summarise(Sales = sum(Sales, na.rm = TRUE)) %>%
+  arrange(Date)
+```
+
+## Summary of data
+
+Basic statistics of aggregated daily sales across all stores, gives us min, max, mean, median - helps us understand the range and distribution of sales
+
+```{r summary}
+summary(agg$Sales)
+```
+
+Daily total sales for Store Type "a" range from 680 to 8.5 million, with a median of 3.6 million and mean of 3.5 million. Since mean and median are very close together, the distribution is suggested to be fairly symmetric. The minimum of 680 is low and likely represents a day where almost all Type "a" stores were closed.
+
+## Plot of total daily sales for Store Type "a" over dates
+
+We're trying to understand: is there a trend? Visible seasonality? Any weird outliers?
+
+```{r daily-sales-plot}
+ggplot(agg, aes(x = Date, y = Sales)) +
+  geom_line() +
+  labs(title = "Total Daily Sales - Store Type A", x = "Date", y = "Sales")
+```
+
+Some things that we can see here are that:
+
+- There is a strong weekly seasonality, the regular repeating spikes and dips throughout the entire series
+- There's no clear upward or downward trend, which means sales are roughly and relatively stable across 2013-2015
+- There are some outlier spikes around early 2014, likely perhaps due to holidays or special events
+- Some zero drops still visible, these could be during Sundays or holidays when all Type "a" stores were closed
+
+## Compare average sales of Store Type "a" on promo vs non-promo days
+
+If mean_sales is higher when Promo=1, that justifies including Promo in our ARMAX model later
+
+```{r promo-comparison}
+agg_with_promo <- sales_df %>% 
+  filter(StoreType == "a", Open == 1, Sales > 0) %>%
+  group_by(Date, Promo) %>%
+  summarise(Sales = sum(Sales, na.rm = TRUE)) %>%
+  arrange(Date)
+
+agg_with_promo %>%
+  group_by(Promo) %>%
+  summarise(mean_sales = mean(Sales), sd_sales = sd(Sales))
+```
+
+On non-promo days, mean sales are about 2.6 million. On promo days they jump to 4.8 million (nearly double). This justifies including Promo as an explanatory variable in our later ARMAX model.
+
+## Scatter plot of competition distance vs mean sales for Store Type "a"
+
+```{r competition-distance-plot}
+sales_df %>%
+  filter(StoreType == "a", Open == 1) %>%
+  group_by(Store) %>%
+  summarise(mean_sales = mean(Sales), CompetitionDistance = first(CompetitionDistance)) %>%
+  ggplot(aes(x = CompetitionDistance, y = mean_sales)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm") +
+  labs(title = "Competition Distance vs Mean Sales - Store Type A")
+```
+
+Since the line slopes downward, it means closer competitors hurt sales. This is counterintuitive but likely means those stores are located in busier, areas where competition is higher but foot traffic may be greater. The relationship is weak though, since the dots are very spread out, CompetitionDistance may only be a marginally useful explanatory variable in ARMAX.
+
+## ACF and PACF plots for Store Type "a"
+
+ACF shows how correlated today's sales for Store Type "a" are with sales from previous days. Slow decay = series is not stationary (needs differencing in ARIMA). Spikes at lags 7, 14, 21 = confirms weekly seasonality
+
+```{r acf-pacf}
+sales_ts <- ts(agg$Sales, frequency = 7)
+par(mar = c(4, 4, 2, 2))
+acf(agg$Sales, lag.max = 60, main = "ACF - Store Type A")
+pacf(agg$Sales, lag.max = 60, main = "PACF - Store Type A")
+```
+
+There are clear spikes at lags 7, 14, 21, 28 (multiples of 7), which confirms strong weekly seasonality every week, today's sales are highly correlated with sales exactly 7 days ago. This informs us that in our ARIMA model, we'd need a seasonal component with a period of 7.
+
+PACF plot - shows the correlation at each lag after removing effects of shorter lags. Helps us identify the AR order (p) for our ARIMA model
+
+Significant spikes at lags 7 and 14, with most other lags inside the blue dashed lines suggests the seasonal AR order is likely 1 or 2, which helps us later narrow down candidate ARIMA models later.
+
+## STL Decomposition
+
+Splits series into three separate components:
+
+- Trend = long term direction (going up or down over time?)
+- Seasonal = repeating weekly pattern
+- Remainder = what's left after removing trend and seasonality (random noise)
+
+Great figure to include in the report as it visually proves seasonality exists
+
+```{r stl-decomposition}
+sales_ts %>%
+  stl(s.window = "periodic") %>%
+  autoplot() +
+  labs(title = "STL Decomposition - Store Type A")
+```
+
+Interpreting these four panels:
+
+- Data: the raw series with all variation
+- Trend: relatively flat overall with a noticeable outlier spike around early 2014, then settling back down. No strong long-term upward or downward direction
+- Seasonal: there's very strong and consistent weekly pattern throughout the entire series, confirming weekly seasonality
+- Remainder: mostly random noise around zero, with a few large spikes around early 2014 corresponding to perhaps unusual days like holidays
+
+## Augmented Dickey-Fuller and KPSS test
+
+Augmented Dickey-Fuller test tests if series is stationary
+
+- p < 0.05 = stationary (good, no differencing needed)
+- p > 0.05 = not stationary (need d=1 in ARIMA)
+
+KPSS test is another stationarity test, interpreted opposite to ADF
+
+- p > 0.05 = stationary
+- p < 0.05 = not stationary
+
+```{r stationarity-tests}
+adf.test(agg$Sales)
+kpss.test(agg$Sales)
+```
+
+ADF test says p-value = 0.01 (less than 0.05), hence series is stationary
+
+KPSS test says p-value = 0.1 (greater than 0.05), hence series is stationary
+
+Since both tests agree the series is stationary, we likely won't need differencing (d=0) in your ARIMA model.
