@@ -1,0 +1,2 @@
+model,train_aic,holdout_rmse,n_holdout
+ARMAX_Promo_Open_DOW_Month,21906.005822396568,399947.52376475494,189

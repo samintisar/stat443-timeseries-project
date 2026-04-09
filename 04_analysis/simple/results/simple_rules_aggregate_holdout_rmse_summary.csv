@@ -1,0 +1,5 @@
+model,holdout_rmse,n_holdout
+iid_by_period,1013538.1611366203,189
+persistence_by_period,1665219.150081956,189
+global_average,1784744.4008469968,189
+persistence,2516853.240925432,189

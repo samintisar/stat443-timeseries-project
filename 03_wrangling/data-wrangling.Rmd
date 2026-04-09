@@ -7,9 +7,6 @@ date: "2026-04-07"
 ---
 
 ```{r setup, include=FALSE}
-install.packages("knitr")
-install.packages("tidyverse")
-install.packages("lubridate")
 knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
@@ -24,7 +21,7 @@ library(tidyverse)
 library(lubridate)
 ```
 
-### First, let's load the data
+### Load the data
 
 ```{r}
 train <- read_csv("../data/raw/train.csv")
@@ -35,36 +32,172 @@ head(train)
 head(store)
 ```
 
-### We focus on store model a, and aggregate this to form a time series
+### Build Store Type A base tables
+
 ```{r}
-# Join train.csv and store.csv
-df_A <- train %>%
+train_a_store <- train %>%
   left_join(store, by = "Store") %>%
-  filter(StoreType == "a", Open == 1) %>%
+  filter(StoreType == "a") %>%
   mutate(Date = as.Date(Date))
 
-# Aggregate to daily sales
-df_A_daily <- df_A %>%
-  group_by(Date) %>%
-  summarise(Sales = sum(Sales),
-            n_stores = n()) %>%
-  arrange(Date)
+test_a_store <- test %>%
+  left_join(store, by = "Store") %>%
+  filter(StoreType == "a") %>%
+  mutate(Date = as.Date(Date))
 
-# Additional time features
-df_A_daily <- df_A_daily %>%
+glimpse(train_a_store)
+glimpse(test_a_store)
+```
+
+### Create train and test modeling panels for Store Type A
+
+```{r}
+train_a_model <- train_a_store %>%
   mutate(
-    Year = lubridate::year(Date),
-    Month = lubridate::month(Date),
-    Week = lubridate::week(Date)
+    Year = year(Date),
+    Month = month(Date),
+    DayOfWeek = wday(Date, week_start = 1),
+    IsoWeek = isoweek(Date),
+    IsWeekend = if_else(DayOfWeek >= 6, 1L, 0L),
+    Open = coalesce(Open, 1L),
+    Promo = coalesce(Promo, 0L),
+    SchoolHoliday = coalesce(SchoolHoliday, 0L)
   )
 
-head(df_A_daily)
+test_a_model <- test_a_store %>%
+  mutate(
+    Year = year(Date),
+    Month = month(Date),
+    DayOfWeek = wday(Date, week_start = 1),
+    IsoWeek = isoweek(Date),
+    IsWeekend = if_else(DayOfWeek >= 6, 1L, 0L),
+    Open = coalesce(Open, 1L),
+    Promo = coalesce(Promo, 0L),
+    SchoolHoliday = coalesce(SchoolHoliday, 0L)
+  )
+
+glimpse(train_a_model)
+glimpse(test_a_model)
 ```
 
-### Time series object
+### Aggregate Store Type A to complete daily train and test series
+
 ```{r}
-ts_A <- ts(df_A_daily$Sales, frequency = 7)
-plot(ts_A)
+train_a_agg_daily <- train_a_model %>%
+  group_by(Date) %>%
+  summarise(
+    Sales = sum(Sales, na.rm = TRUE),
+    OpenStores = sum(Open == 1, na.rm = TRUE),
+    PromoStores = sum(Promo == 1, na.rm = TRUE),
+    SchoolHolidayShare = mean(SchoolHoliday, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    PromoShare = if_else(OpenStores > 0, PromoStores / OpenStores, 0)
+  ) %>%
+  complete(
+    Date = seq(min(Date), max(Date), by = "day"),
+    fill = list(
+      Sales = 0,
+      OpenStores = 0,
+      PromoStores = 0,
+      PromoShare = 0,
+      SchoolHolidayShare = 0
+    )
+  ) %>%
+  mutate(
+    SchoolHolidayShare = replace_na(SchoolHolidayShare, 0),
+    Year = year(Date),
+    Month = month(Date),
+    DayOfWeek = wday(Date, week_start = 1),
+    IsoWeek = isoweek(Date),
+    IsWeekend = if_else(DayOfWeek >= 6, 1L, 0L)
+  ) %>%
+  arrange(Date) %>%
+  select(
+    Date,
+    Sales,
+    OpenStores,
+    PromoStores,
+    PromoShare,
+    SchoolHolidayShare,
+    DayOfWeek,
+    Year,
+    Month,
+    IsoWeek,
+    IsWeekend
+  )
+
+test_a_agg_daily <- test_a_model %>%
+  group_by(Date) %>%
+  summarise(
+    OpenStores = sum(Open == 1, na.rm = TRUE),
+    PromoStores = sum(Promo == 1, na.rm = TRUE),
+    SchoolHolidayShare = mean(SchoolHoliday, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    PromoShare = if_else(OpenStores > 0, PromoStores / OpenStores, 0)
+  ) %>%
+  complete(
+    Date = seq(min(Date), max(Date), by = "day"),
+    fill = list(
+      OpenStores = 0,
+      PromoStores = 0,
+      PromoShare = 0,
+      SchoolHolidayShare = 0
+    )
+  ) %>%
+  mutate(
+    SchoolHolidayShare = replace_na(SchoolHolidayShare, 0),
+    Year = year(Date),
+    Month = month(Date),
+    DayOfWeek = wday(Date, week_start = 1),
+    IsoWeek = isoweek(Date),
+    IsWeekend = if_else(DayOfWeek >= 6, 1L, 0L)
+  ) %>%
+  arrange(Date) %>%
+  select(
+    Date,
+    OpenStores,
+    PromoStores,
+    PromoShare,
+    SchoolHolidayShare,
+    DayOfWeek,
+    Year,
+    Month,
+    IsoWeek,
+    IsWeekend
+  )
+
+head(train_a_agg_daily)
+head(test_a_agg_daily)
 ```
 
-The aggregated time series exhibits strong weekly seasonality, with noticeable drops in sales on certain days (e.g., Sundays), reflecting reduced store activity rather than true demand fluctuations. Notice that these drops in sales are due to most of the closed stores on certain days, but it is not entirely zero as some stores remain open that day.
+### Sanity checks
+
+```{r}
+date_span <- as.integer(max(train_a_agg_daily$Date) - min(train_a_agg_daily$Date)) + 1
+missing_days <- date_span - nrow(train_a_agg_daily)
+
+tibble(
+  n_store_type_a_train_stores = n_distinct(train_a_model$Store),
+  n_store_type_a_test_stores = n_distinct(test_a_model$Store),
+  n_train_rows = nrow(train_a_model),
+  n_test_rows = nrow(test_a_model),
+  n_train_agg_daily_rows = nrow(train_a_agg_daily),
+  n_test_agg_daily_rows = nrow(test_a_agg_daily),
+  missing_days_in_agg = missing_days
+)
+```
+
+### Save processed outputs
+
+```{r}
+dir.create("../data/processed", showWarnings = FALSE, recursive = TRUE)
+
+write_csv(train_a_model, "../data/processed/store_type_a_train_store_daily.csv")
+write_csv(test_a_model, "../data/processed/store_type_a_test_store_daily.csv")
+write_csv(train_a_agg_daily, "../data/processed/store_type_a_train_aggregate_daily.csv")
+write_csv(test_a_agg_daily, "../data/processed/store_type_a_test_aggregate_daily.csv")
+```

@@ -2,24 +2,32 @@
 
 **STAT 443 Team Project:** Time Series Forecasting using Rossmann Store Sales data
 
+## Project Target
+
+For this project, the official forecasting target is:
+
+- **Daily aggregate Sales for StoreType == "a"**
+- One forecast per calendar date in the test horizon
+- Not row-level (Store, Date) predictions by Id
+
 ## Dataset Description
 
-You are provided with historical sales data for 1,115 Rossmann stores. The task is to forecast the "Sales" column for the test set. Note that some stores in the dataset were temporarily closed for refurbishment.
+You are provided with historical sales data for 1,115 Rossmann stores. The original Rossmann setup is row-level Sales prediction for the test set, but this project intentionally narrows scope to **aggregate-daily Sales for Store Type A**. Note that some stores in the dataset were temporarily closed for refurbishment.
 
 ## Files
 
 - `train.csv` - historical data including Sales
 - `test.csv` - historical data excluding Sales
-- `sample_submission.csv` - a sample submission file in the correct format
+- `sample_submission.csv` - original row-level competition format (reference only for this project)
 - `store.csv` - supplemental information about the stores
 
 ## Data fields
 
 Most of the fields are self-explanatory. The following are descriptions for those that aren't.
 
-- **Id** - an Id that represents a (Store, Date) duple within the test set
+- **Id** - an Id that represents a (Store, Date) duple within the test set (not the final prediction unit in this project)
 - **Store** - a unique Id for each store
-- **Sales** - the turnover for any given day (this is what you are predicting)
+- **Sales** - the turnover for any given day; this project predicts the **sum of Sales across Store Type A per date**
 - **Customers** - the number of customers on a given day
 - **Open** - an indicator for whether the store was open: 0 = closed, 1 = open
 - **StateHoliday** - indicates a state holiday. Normally all stores, with few exceptions, are closed on state holidays. Note that all schools are closed on public holidays and weekends. a = public holiday, b = Easter holiday, c = Christmas, 0 = None
@@ -81,7 +89,7 @@ renv::status()
 │   ├── exponential/
 │   ├── arima/
 │   └── armax/
-├── 05_rmse/                   # RMSE evaluation
+│   (Backtesting/RMSE evaluation is done inside method notebooks)
 ├── 06_conclusion/             # Final conclusions
 ├── 07_reference/              # References
 ├── 08_contributions/          # Contribution notes

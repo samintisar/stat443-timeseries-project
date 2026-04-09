@@ -1,0 +1,228 @@
+---
+title: "4.1 Simple Rules: Aggregate-Daily (Store Type A)"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-04-08"
+---
+
+## Goal
+
+Compare simple aggregate-daily baselines for Store Type A:
+
+1. Global average (average of all observations in training subset)
+2. Persistence (last observation)
+3. Persistence by period (value from same day in previous week)
+4. IID by period (historical mean for same day-of-week)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+## Data
+
+```{r data}
+library(tidyverse)
+
+train_data <- readr::read_csv(
+  "../../data/processed/store_type_a_train_aggregate_daily.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(
+    Date = as.Date(Date),
+    DayOfWeek = as.integer(DayOfWeek)
+  ) |>
+  dplyr::arrange(Date)
+
+test_dates <- readr::read_csv(
+  "../../data/processed/store_type_a_test_aggregate_daily.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::transmute(
+    Date = as.Date(Date),
+    DayOfWeek = as.integer(format(Date, "%u"))
+  ) |>
+  dplyr::arrange(Date)
+
+head(train_data)
+```
+
+## Holdout Split Setup
+
+```{r holdout-split}
+set.seed(443)
+
+holdout_prop <- 0.20
+n_total <- nrow(train_data)
+n_train <- floor((1 - holdout_prop) * n_total)
+
+train_subset <- train_data |> dplyr::slice(1:n_train)
+holdout_subset <- train_data |> dplyr::slice((n_train + 1):n_total)
+
+holdout_split <- tibble::tibble(
+  n_total = n_total,
+  n_train = n_train,
+  n_holdout = n_total - n_train,
+  train_start = min(train_subset$Date),
+  train_end = max(train_subset$Date),
+  holdout_start = min(holdout_subset$Date),
+  holdout_end = max(holdout_subset$Date)
+)
+
+holdout_split
+```
+
+## Models
+
+```{r models}
+global_average_holdout_fc <- function(data, n_train) {
+  idx_holdout <- (n_train + 1):nrow(data)
+  rep(mean(data$Sales[seq_len(n_train)], na.rm = TRUE), length(idx_holdout))
+}
+
+persistence_holdout_fc <- function(data, n_train) {
+  idx_holdout <- (n_train + 1):nrow(data)
+  data$Sales[idx_holdout - 1]
+}
+
+persistence_by_period_holdout_fc <- function(data, n_train, seasonal_period = 7) {
+  idx_holdout <- (n_train + 1):nrow(data)
+  if (n_train <= seasonal_period) {
+    stop("Training subset must be longer than seasonal_period for persistence_by_period.")
+  }
+  data$Sales[idx_holdout - seasonal_period]
+}
+
+iid_by_period_holdout_fc <- function(data, n_train) {
+  idx_holdout <- (n_train + 1):nrow(data)
+
+  purrr::map_dbl(idx_holdout, function(i) {
+    dow_i <- data$DayOfWeek[i]
+    history_idx <- seq_len(i - 1)
+    hist_vals <- data$Sales[history_idx][data$DayOfWeek[history_idx] == dow_i]
+
+    if (length(hist_vals) == 0) {
+      mean(data$Sales[seq_len(n_train)], na.rm = TRUE)
+    } else {
+      mean(hist_vals, na.rm = TRUE)
+    }
+  })
+}
+
+holdout_model_registry <- list(
+  global_average = global_average_holdout_fc,
+  persistence = persistence_holdout_fc,
+  persistence_by_period = persistence_by_period_holdout_fc,
+  iid_by_period = iid_by_period_holdout_fc
+)
+
+global_average_future_fc <- function(train_df, future_df) {
+  tibble::tibble(Date = future_df$Date, yhat = mean(train_df$Sales, na.rm = TRUE))
+}
+
+persistence_future_fc <- function(train_df, future_df) {
+  tibble::tibble(Date = future_df$Date, yhat = dplyr::last(train_df$Sales))
+}
+
+persistence_by_period_future_fc <- function(train_df, future_df, seasonal_period = 7) {
+  pattern <- tail(train_df$Sales, seasonal_period)
+  tibble::tibble(Date = future_df$Date, yhat = rep(pattern, length.out = nrow(future_df)))
+}
+
+iid_by_period_future_fc <- function(train_df, future_df) {
+  dow_means <- train_df |>
+    dplyr::group_by(DayOfWeek) |>
+    dplyr::summarise(mean_sales = mean(Sales, na.rm = TRUE), .groups = "drop")
+
+  fallback_mean <- mean(train_df$Sales, na.rm = TRUE)
+
+  future_df |>
+    dplyr::left_join(dow_means, by = "DayOfWeek") |>
+    dplyr::transmute(Date, yhat = dplyr::coalesce(mean_sales, fallback_mean))
+}
+
+future_model_registry <- list(
+  global_average = global_average_future_fc,
+  persistence = persistence_future_fc,
+  persistence_by_period = persistence_by_period_future_fc,
+  iid_by_period = iid_by_period_future_fc
+)
+```
+
+## Holdout Evaluation
+
+```{r holdout-evaluation}
+rmse_vec <- function(actual, pred) sqrt(mean((actual - pred)^2, na.rm = TRUE))
+
+holdout_predictions_wide <- tibble::tibble(
+  Date = holdout_subset$Date,
+  actual = holdout_subset$Sales
+)
+
+model_prediction_cols <- purrr::imap(holdout_model_registry, function(fc_fn, model_name) {
+  preds <- fc_fn(train_data, n_train)
+  tibble::tibble(!!model_name := preds)
+})
+
+holdout_predictions_wide <- dplyr::bind_cols(holdout_predictions_wide, model_prediction_cols)
+
+holdout_predictions_long <- holdout_predictions_wide |>
+  tidyr::pivot_longer(
+    cols = -c(Date, actual),
+    names_to = "model",
+    values_to = "predicted"
+  )
+
+holdout_rmse_summary <- holdout_predictions_long |>
+  dplyr::group_by(model) |>
+  dplyr::summarise(
+    holdout_rmse = rmse_vec(actual, predicted),
+    n_holdout = dplyr::n(),
+    .groups = "drop"
+  ) |>
+  dplyr::arrange(holdout_rmse)
+
+holdout_rmse_summary
+```
+
+```{r holdout-plot, fig.width=9, fig.height=4}
+best_model_name <- holdout_rmse_summary$model[[1]]
+
+plot_df <- holdout_predictions_long |>
+  dplyr::filter(model == best_model_name)
+
+ggplot(plot_df, aes(x = Date)) +
+  geom_line(aes(y = actual, color = "Actual")) +
+  geom_line(aes(y = predicted, color = "Predicted")) +
+  labs(
+    title = paste("Simple Holdout: 1-Step Forecasts (", best_model_name, ")", sep = ""),
+    x = "Date",
+    y = "Sales",
+    color = "Series"
+  )
+```
+
+## Final Forecast
+
+```{r final-forecast}
+best_model_name <- holdout_rmse_summary$model[[1]]
+best_model_fn <- future_model_registry[[best_model_name]]
+
+simple_aggregate_test_forecast <- best_model_fn(train_data, test_dates) |>
+  dplyr::mutate(predicted_aggregate_sales = pmax(0, yhat)) |>
+  dplyr::select(Date, predicted_aggregate_sales)
+
+best_model_name
+head(simple_aggregate_test_forecast)
+```
+
+## Save Outputs
+
+```{r save-results}
+dir.create("results", showWarnings = FALSE, recursive = TRUE)
+
+readr::write_csv(holdout_split, "results/simple_rules_aggregate_holdout_split.csv")
+readr::write_csv(holdout_predictions_long, "results/simple_rules_aggregate_holdout_predictions.csv")
+readr::write_csv(holdout_rmse_summary, "results/simple_rules_aggregate_holdout_rmse_summary.csv")
+readr::write_csv(simple_aggregate_test_forecast, "results/simple_rules_aggregate_test_forecast.csv")
+```

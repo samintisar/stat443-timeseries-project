@@ -1,0 +1,4 @@
+model,train_aic,seasonal_period_raw,seasonal_period_used,arima_order
+ARMAX_Promo_Open_DOW_Month,21906.005822396568,NA,7,"(2,0,2)(2,0,1)[7]"
+ARMAX_Promo_Open_DOW,21920.57605568723,NA,7,"(2,0,5)(2,0,2)[7]"
+ARMAX_Promo_Open,22073.41659090492,NA,7,"(2,0,2)(2,0,0)[7]"
