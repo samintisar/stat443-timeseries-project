@@ -79,6 +79,7 @@ test_a_model <- test_a_store %>%
 glimpse(train_a_model)
 glimpse(test_a_model)
 ```
+In addition to sales, several time-varying explanatory variables were included. The Promo variable represents the proportion of stores running promotions on a given day, while SchoolHoliday and StateHoliday capture the proportion of stores affected by school and public holidays, respectively. These variables provide additional context for changes in sales beyond purely temporal patterns.
 
 ### Aggregate Store Type A to complete daily train and test series
 
@@ -174,6 +175,45 @@ head(train_a_agg_daily)
 head(test_a_agg_daily)
 ```
 
+### Additional outputs (Version 1 and Version 2)
+
+```{r}
+# Version 1: clean univariate daily sales series
+df_A_daily_clean <- train_a_model %>%
+  group_by(Date) %>%
+  summarise(
+    Sales = sum(Sales, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Date) %>%
+  mutate(
+    Year = year(Date),
+    Month = month(Date),
+    Week = week(Date)
+  )
+
+# Version 2: daily series with external variables
+df_A_daily_full <- train_a_model %>%
+  group_by(Date) %>%
+  summarise(
+    Sales = sum(Sales, na.rm = TRUE),
+    n_stores = n(),
+    Promo = mean(Promo, na.rm = TRUE),
+    SchoolHoliday = mean(SchoolHoliday, na.rm = TRUE),
+    StateHoliday = mean(if_else(is.na(StateHoliday) | StateHoliday == "0", 0, 1), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  arrange(Date) %>%
+  mutate(
+    Year = year(Date),
+    Month = month(Date),
+    Week = week(Date)
+  )
+
+head(df_A_daily_clean)
+head(df_A_daily_full)
+```
+
 ### Sanity checks
 
 ```{r}
@@ -200,4 +240,6 @@ write_csv(train_a_model, "../data/processed/store_type_a_train_store_daily.csv")
 write_csv(test_a_model, "../data/processed/store_type_a_test_store_daily.csv")
 write_csv(train_a_agg_daily, "../data/processed/store_type_a_train_aggregate_daily.csv")
 write_csv(test_a_agg_daily, "../data/processed/store_type_a_test_aggregate_daily.csv")
+write_csv(df_A_daily_clean, "../data/processed/daily_store_a_clean.csv")
+write_csv(df_A_daily_full, "../data/processed/daily_store_a_full.csv")
 ```
