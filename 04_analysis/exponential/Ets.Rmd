@@ -65,7 +65,6 @@ ggplot(daily_data, aes(x = Date, y = Sales)) +
 ```{r}
 sales_ts <- ts(train_subset$Sales, frequency = 7)
 
-sales_ts
 ```
 ```{r}
 ets_model <- ets(sales_ts)
