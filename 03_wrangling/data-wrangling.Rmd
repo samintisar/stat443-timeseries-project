@@ -7,7 +7,11 @@ date: "2026-04-07"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
 ```
 
 ## Data Wrangling
@@ -19,7 +23,7 @@ library(lubridate)
 
 ### First, let's load the data
 
-```{r, message = FALSE}
+```{r}
 train <- read_csv("../data/raw/train.csv")
 store <- read_csv("../data/raw/store.csv")
 test  <- read_csv("../data/raw/test.csv")
