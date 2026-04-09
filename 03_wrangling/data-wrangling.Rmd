@@ -1,0 +1,54 @@
+---
+title: "Rossmann Sales Data Wrangling"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-04-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data Wrangling
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+### First, let's load the data
+
+```{r, message = FALSE}
+train <- read_csv("../data/raw/train.csv")
+store <- read_csv("../data/raw/store.csv")
+test  <- read_csv("../data/raw/test.csv")
+
+head(train)
+head(store)
+```
+
+### We focus on store model a, and aggregate this to form a time series
+```{r}
+# Join train.csv and store.csv
+df_A <- train %>%
+  left_join(store, by = "Store") %>%
+  filter(StoreType == "a", Open == 1) %>%
+  mutate(Date = as.Date(Date))
+
+# Aggregate to daily sales
+df_A_daily <- df_A %>%
+  group_by(Date) %>%
+  summarise(Sales = sum(Sales)) %>%
+  arrange(Date)
+
+# Additional time features
+df_A_daily <- df_A_daily %>%
+  mutate(
+    Year = lubridate::year(Date),
+    Month = lubridate::month(Date),
+    Week = lubridate::week(Date)
+  )
+
+head(df_A_daily)
+```

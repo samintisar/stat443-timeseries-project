@@ -19,6 +19,10 @@
 /*.tar.gz
 /*.Rcheck/
 
+# renv package cache/library
+renv/library/
+renv/staging/
+
 # Credentials and deployment
 .httr-oauth
 .Renviron
