@@ -7,6 +7,9 @@ date: "2026-04-07"
 ---
 
 ```{r setup, include=FALSE}
+install.packages("knitr")
+install.packages("tidyverse")
+install.packages("lubridate")
 knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
@@ -43,7 +46,8 @@ df_A <- train %>%
 # Aggregate to daily sales
 df_A_daily <- df_A %>%
   group_by(Date) %>%
-  summarise(Sales = sum(Sales)) %>%
+  summarise(Sales = sum(Sales),
+            n_stores = n()) %>%
   arrange(Date)
 
 # Additional time features
@@ -56,3 +60,11 @@ df_A_daily <- df_A_daily %>%
 
 head(df_A_daily)
 ```
+
+### Time series object
+```{r}
+ts_A <- ts(df_A_daily$Sales, frequency = 7)
+plot(ts_A)
+```
+
+The aggregated time series exhibits strong weekly seasonality, with noticeable drops in sales on certain days (e.g., Sundays), reflecting reduced store activity rather than true demand fluctuations. Notice that these drops in sales are due to most of the closed stores on certain days, but it is not entirely zero as some stores remain open that day.
