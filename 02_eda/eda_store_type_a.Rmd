@@ -1,22 +1,38 @@
-We’re doing an Exploratory Data Analysis on Store Type “a”. Here are the things we considered when doing Exploratory Data Analysis as we’re trying to understand our data to justify the modelling choices we make later on: 
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# Exploratory Data Analysis: Store Type A
 
-- **What does the sales data look like? Is it stable, trending up/down, all over the place?
-- Is there a pattern? Do sales repeat weekly, monthly?
-- What affects sales? Does promo, competition, day of week matter?
-- Is the series stationary? To tell us what kind of ARIMA model to use later! 
+We are doing an Exploratory Data Analysis on Store Type "a". Here are the key questions we are answering to justify later modeling choices:
 
-```{r setup, message=FALSE, warning=FALSE}
+- What does the sales data look like over time: stable, trending, or volatile?
+- Is there a repeating seasonal pattern (weekly/monthly)?
+- What affects sales: promo, competition, and day of week?
+- Is the series stationary to guide ARIMA differencing?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r libraries}
 library(tidyverse)
 library(forecast)
 library(tseries)
-train <- read_csv("rossmann-store-sales/train.csv")
-store <- read_csv("rossmann-store-sales/store.csv")
-sales_df <- train %>% left_join(store, by = "Store")
-agg <- sales_df %>%
-  filter(StoreType == "a", Open == 1, Sales > 0) %>%
-  group_by(Date) %>%
-  summarise(Sales = sum(Sales, na.rm = TRUE)) %>%
+```
+
+```{r load-data}
+agg <- read_csv("../data/processed/store_type_a_train_aggregate_daily.csv") %>%
+  mutate(Date = as.Date(Date)) %>%
   arrange(Date)
+
+store_daily <- read_csv("../data/processed/store_type_a_train_store_daily.csv") %>%
+  mutate(Date = as.Date(Date))
 ```
 
 ## Summary of data
@@ -27,13 +43,26 @@ Basic statistics of aggregated daily sales across all stores, gives us min, max,
 summary(agg$Sales)
 ```
 
-Daily total sales for Store Type "a" range from 680 to 8.5 million, with a median of 3.6 million and mean of 3.5 million. Since mean and median are very close together, the distribution is suggested to be fairly symmetric. The minimum of 680 is low and likely represents a day where almost all Type "a" stores were closed.
+## Date continuity check
+
+```{r date-continuity}
+date_span <- as.integer(max(agg$Date) - min(agg$Date)) + 1
+missing_days <- date_span - nrow(agg)
+
+tibble(
+  first_date = min(agg$Date),
+  last_date = max(agg$Date),
+  expected_days = date_span,
+  observed_days = nrow(agg),
+  missing_days = missing_days
+)
+```
 
 ## Plot of total daily sales for Store Type "a" over dates
 
 We're trying to understand: is there a trend? Visible seasonality? Any weird outliers?
 
-```{r daily-sales-plot}
+```{r daily-sales-plot, fig.width=11, fig.height=4}
 ggplot(agg, aes(x = Date, y = Sales)) +
   geom_line() +
   labs(title = "Total Daily Sales - Store Type A", x = "Date", y = "Sales")
@@ -46,29 +75,56 @@ Some things that we can see here are that:
 - There are some outlier spikes around early 2014, likely perhaps due to holidays or special events
 - Some zero drops still visible, these could be during Sundays or holidays when all Type "a" stores were closed
 
-## Compare average sales of Store Type "a" on promo vs non-promo days
+## Compare average sales on promo vs non-promo days
 
-If mean_sales is higher when Promo=1, that justifies including Promo in our ARMAX model later
+If mean sales are higher when PromoShare > 0, that supports including promo as an external regressor in ARMAX later.
 
 ```{r promo-comparison}
-agg_with_promo <- sales_df %>% 
-  filter(StoreType == "a", Open == 1, Sales > 0) %>%
-  group_by(Date, Promo) %>%
-  summarise(Sales = sum(Sales, na.rm = TRUE)) %>%
-  arrange(Date)
+promo_summary <- agg %>%
+  mutate(PromoDay = if_else(PromoShare > 0, 1L, 0L)) %>%
+  group_by(DayOfWeek, PromoDay) %>%
+  summarise(
+    mean_sales = mean(Sales, na.rm = TRUE),
+    sd_sales = sd(Sales, na.rm = TRUE),
+    n = n(),
+    .groups = "drop"
+  )
 
-agg_with_promo %>%
-  group_by(Promo) %>%
-  summarise(mean_sales = mean(Sales), sd_sales = sd(Sales))
+promo_summary
+
+promo_lm <- agg %>%
+  filter(Sales > 0) %>%
+  mutate(
+    DayOfWeek = factor(DayOfWeek),
+    Month = factor(Month)
+  ) %>%
+  lm(log1p(Sales) ~ PromoShare + OpenStores + DayOfWeek + Month, data = .)
+
+coef(summary(promo_lm))["PromoShare", ]
 ```
 
-On non-promo days, mean sales are about 2.6 million. On promo days they jump to 4.8 million (nearly double). This justifies including Promo as an explanatory variable in our later ARMAX model.
+## Day-of-week effect
+
+```{r day-of-week-effect, fig.width=8, fig.height=4}
+dow_summary <- agg %>%
+  filter(Sales > 0) %>%
+  group_by(DayOfWeek) %>%
+  summarise(mean_sales = mean(Sales, na.rm = TRUE), .groups = "drop")
+
+ggplot(dow_summary, aes(x = factor(DayOfWeek), y = mean_sales)) +
+  geom_col(fill = "steelblue") +
+  labs(
+    title = "Average Sales by Day Of Week - Store Type A",
+    x = "DayOfWeek (1 = Monday, 7 = Sunday)",
+    y = "Mean Sales"
+  )
+```
 
 ## Scatter plot of competition distance vs mean sales for Store Type "a"
 
 ```{r competition-distance-plot}
-sales_df %>%
-  filter(StoreType == "a", Open == 1) %>%
+store_daily %>%
+  filter(Open == 1, Sales > 0, !is.na(CompetitionDistance)) %>%
   group_by(Store) %>%
   summarise(mean_sales = mean(Sales), CompetitionDistance = first(CompetitionDistance)) %>%
   ggplot(aes(x = CompetitionDistance, y = mean_sales)) +
@@ -83,11 +139,12 @@ Since the line slopes downward, it means closer competitors hurt sales. This is 
 
 ACF shows how correlated today's sales for Store Type "a" are with sales from previous days. Slow decay = series is not stationary (needs differencing in ARIMA). Spikes at lags 7, 14, 21 = confirms weekly seasonality
 
-```{r acf-pacf}
+```{r acf-pacf, fig.width=11, fig.height=4}
 sales_ts <- ts(agg$Sales, frequency = 7)
-par(mar = c(4, 4, 2, 2))
+par(mfrow = c(1, 2))
 acf(agg$Sales, lag.max = 60, main = "ACF - Store Type A")
 pacf(agg$Sales, lag.max = 60, main = "PACF - Store Type A")
+par(mfrow = c(1, 1))
 ```
 
 There are clear spikes at lags 7, 14, 21, 28 (multiples of 7), which confirms strong weekly seasonality every week, today's sales are highly correlated with sales exactly 7 days ago. This informs us that in our ARIMA model, we'd need a seasonal component with a period of 7.
@@ -106,11 +163,9 @@ Splits series into three separate components:
 
 Great figure to include in the report as it visually proves seasonality exists
 
-```{r stl-decomposition}
-sales_ts %>%
-  stl(s.window = "periodic") %>%
-  autoplot() +
-  labs(title = "STL Decomposition - Store Type A")
+```{r stl-decomposition, fig.width=11, fig.height=7}
+stl_fit <- stl(sales_ts, s.window = "periodic")
+plot(stl_fit)
 ```
 
 Interpreting these four panels:
@@ -133,12 +188,21 @@ KPSS test is another stationarity test, interpreted opposite to ADF
 - p < 0.05 = not stationary
 
 ```{r stationarity-tests}
-adf.test(agg$Sales)
-kpss.test(agg$Sales)
+adf_result <- adf.test(agg$Sales)
+kpss_result <- kpss.test(agg$Sales)
+
+adf_result
+kpss_result
 ```
 
 ADF test says p-value = 0.01 (less than 0.05), hence series is stationary
 
 KPSS test says p-value = 0.1 (greater than 0.05), hence series is stationary
 
-Since both tests agree the series is stationary, we likely won't need differencing (d=0) in your ARIMA model.
+Since both tests agree the series is stationary, we likely won't need differencing (d=0) in the ARIMA model.
+
+## EDA notes for modeling
+
+- Strong weekly behavior (period 7) supports seasonal ARIMA terms.
+- Promo share, open stores, and day-of-week effects suggest useful external regressors for ARMAX.
+- Stationarity test outcomes guide whether differencing is required.
