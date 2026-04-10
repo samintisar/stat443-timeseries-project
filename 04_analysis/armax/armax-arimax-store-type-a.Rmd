@@ -71,6 +71,15 @@ test_data <- readr::read_csv(
 
 head(train_data)
 ```
+#### Interpretation
+
+When conducting ARMAX / ARIMAX analysis, we are interested in evaluating exogenous variables that may influence sales (target variable). Here we have:
+
+- `PromoShare`: captures promotional intensity across stores  
+- `OpenStores`: reflects operational scale  
+- `DayOfWeek`, `Month`: capture calendar-driven seasonality  
+
+These variables form the exogenous variables to be used in the ARMAX model. The goal is to explain variation in sales beyond what can be captured by past values alone.
 
 ## 4.4.1 Forecasting Assumption and Information Set
 
@@ -93,6 +102,13 @@ Practical interpretation:
 \textcolor{red}{All makes great sense - do we need to prove this is the case in the actual dataset when we practice actual analysis?}
 
 ## 4.4.2 Candidate ARMAX Model Specifications
+
+We define the following ARMAX specifications with increasing complexity:
+
+- Basic model: operational variables only  
+- Extended models: include calendar effects  
+
+This allows us to assess whether adding additional predictors improves model fit and forecasting performance. Note that while more complex models may fit better, we risk overfitting so complex models must be validated on the holdout set (section 4.4.8).
 
 ```{r model-specs}
 model_specs <- list(
@@ -165,8 +181,26 @@ stats::ccf(
 
 par(old_par)
 ```
+#### Interpretation
+
+The cross-correlation function (CCF) examines the relationship between changes in predictors and changes in sales.
+
+- Significant correlations at lag 0 suggest contemporaneous relationships.  
+- Significant correlations at lag \(k\) suggest lagged effects between \textcolor{red}{to be completed}.   
+
+On a high level, these diagnostics provide evidence for including specific predictors in the ARMAX model (ones that show significant correlations with changes in the target variable). Nonetheless, CCF results should be interpreted cautiously as correlation does not imply causation and may be influenced by shared trends or seasonality.
 
 ## 4.4.5 ARMAX Modeling: Function Setup, Fitting and Selection
+
+#### Setting up ARMAX Modeling Functions
+
+The utility functions below standardize the ARMAX modeling process by carrying out the following functionalities:
+
+- Constructing and cleaning exogenous regressors (`xreg`),
+- Fitting ARMAX models consistently across specifications,  
+- Generating fixed-coefficient forecasts for fair evaluation.  
+
+This modular design ensures reproducibility and allows systematic comparison across multiple candidate models.
 
 ```{r armax-functions}
 build_xreg <- function(df, model_formula) {
@@ -345,8 +379,20 @@ if (nrow(seasonal_period_issues) > 0) {
 
 seasonal_period_issues
 ```
+#### Interpretation
+
+In the code above we fit each candidate ARMAX model on the training set and compare them using AIC.
+
+- A lower AIC indicates a better balance between model fit and complexity.  
+- This step serves as an initial filter for selecting promising models.  
+
+However, note that AIC is an in-sample metric and does not directly measure forecasting performance. Therefore, the selected model must be validated using the holdout dataset.
 
 ## 4.4.6 Fixed-Coefficient 1-Step Holdout Evaluation
+
+In this step we evaluate a model's forecasting performance using 1-step-ahead predictions on the holdout set, where model parameters are fixed from the training stage. This avoids re-fitting and ensures a fair evaluation.  
+
+In addition to AIC, RMSE is also used here as a performance metric, where lower RMSE indicates better predictive accuracy. Generally speaking, RMSE is the primary criterion for model comparison in forecasting contexts. \textcolor{red}{need to add rmse}
 
 ```{r holdout-evaluation}
 best_model <- aic_table |>
@@ -404,8 +450,17 @@ ggplot(holdout_predictions, aes(x = Date)) +
     color = "Series"
   )
 ```
+#### Interpretation
+
+Residual diagnostics assess whether the model has captured the underlying time series structure.
+
+- Ideally, residuals should resemble white noise.  
+- The Ljung–Box test evaluates whether significant autocorrelation remains.  
+
+If residuals are not white noise, this suggests that the model may be misspecified and could be improved by adjusting AR or MA components. \textcolor{red}{add comments to tie into actual plots - yolanda}
 
 ### Best-Performing ARMAX Model
+\textcolor{red}{do we want to add a version here with the best model variables but weekends removed?}
 
 ```{r choose-best}
 best_model
@@ -414,7 +469,16 @@ best_model_name
 best_model_formula
 ```
 
+The selected model above represents the best-performing ARMAX specification based on the chosen selection criteria.
+
+This model balances:
+- Inclusion of relevant exogenous variables, as well as  
+- Adequate modeling of time series dependence.  
+
+Hence, it will be the model we proceed with for final forecasting in this section.
+
 ## 4.4.8 Test Forecasting with Final Model 
+In this step, the selected ARMAX model is refit using the full training dataset to maximize information usage. Forecasts are then generated for the test period using the corresponding exogenous variables. These forecasts represent the final model output and will be used for evaluation and comparison with other methods.
 
 ```{r full-fit-and-forecast}
 y_full <- ts(train_data$Sales, frequency = seasonal_frequency)
