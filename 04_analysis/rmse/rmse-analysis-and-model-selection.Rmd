@@ -1,5 +1,183 @@
 ---
-title: "rmse-analysis-and-model-selection"
-output: html_document
+title: "4.5 Model Comparison: RMSE and Final Selection"
+output:
+  pdf_document: default
+  html_document: default
+date: "2026-04-09"
 ---
+
+## Goal
+
+This section will compare forecasting performance across all methods using holdout RMSE and select the final model.
+
+Methods included:
+
+- Simple Rules (baseline model)
+- Exponential Smoothing (ETS)
+- ARIMA
+- ARMAX
+
+The primary evaluation metric is holdout RMSE, which reflects out-of-sample predictive accuracy.
+
+## RMSE Caluclations
+The following computations complete RMSE calculations for finalized models derived from previous analysis. 
+
+
+#### RMSE for ARIMA
+First for all the candidate ARIMA models:
+
+```{r}
+library(tidyverse)
+library(forecast)
+
+agg <- readr::read_csv(
+  "../data/processed/store_type_a_train_aggregate_daily.csv"
+) |>
+  dplyr::mutate(Date = as.Date(Date)) |>
+  dplyr::arrange(Date)
+
+sales_ts <- ts(agg$Sales, frequency = 7)
+
+holdout_prop <- 0.20
+n_total <- nrow(agg)
+n_train <- floor((1 - holdout_prop) * n_total)
+
+train_subset <- agg |> slice(1:n_train)
+holdout_subset <- agg |> slice((n_train + 1):n_total)
+
+y_all <- ts(agg$Sales, frequency = 7)
+
+model1 <- auto.arima(ts(train_subset$Sales, frequency = 7))
+
+model2 <- Arima(ts(train_subset$Sales, frequency = 7), order=c(4,0,1), seasonal=c(2,1,1))
+model3 <- Arima(ts(train_subset$Sales, frequency = 7), order=c(4,0,1), seasonal=c(1,1,0))
+model4 <- Arima(ts(train_subset$Sales, frequency = 7), order=c(2,0,1), seasonal=c(2,1,0))
+model5 <- Arima(ts(train_subset$Sales, frequency = 7), order=c(4,0,2), seasonal=c(2,1,0))
+
+models <- list(
+  ARIMA_auto = model1,
+  ARIMA_m2 = model2,
+  ARIMA_m3 = model3,
+  ARIMA_m4 = model4,
+  ARIMA_m5 = model5
+)
+
+rmse_vec <- function(actual, pred) {
+  sqrt(mean((actual - pred)^2, na.rm = TRUE))
+}
+
+# RMSE computation using 1-step forecast
+arima_rmse_table <- purrr::imap_dfr(models, function(mod, name) {
+
+  ord <- arimaorder(mod)
+
+  fixed_fit <- stats::arima(
+    y_all,
+    order = c(ord["p"], ord["d"], ord["q"]),
+    seasonal = list(order = c(ord["P"], ord["D"], ord["Q"]), period = ord["m"]),
+    fixed = as.numeric(mod$coef),
+    transform.pars = FALSE,
+    optim.control = list(maxit = 0),
+    method = "ML"
+  )
+
+  fc_all <- as.numeric(y_all - fixed_fit$residuals)
+
+  holdout_idx <- (n_train + 1):length(y_all)
+
+  preds <- tibble::tibble(
+    model = name,
+    rmse = rmse_vec(
+      actual = as.numeric(y_all[holdout_idx]),
+      pred = fc_all[holdout_idx]
+    )
+  )
+
+  preds
+}) |>
+  arrange(rmse)
+
+arima_rmse_table
+```
+#### Interpretation:
+Based on the results above, the best ARIMA model out of all candidates is model with RMSE = . We will proceed with this model as a representative for the ARIMA method in the remaining analysis.
+
+
+#### RMSE for ARMAX
+Then for ARMAX models:
+
+
+## Combining RMSE Results Across Explored Methods
+
+```{r}
+simple_rmse <- readr::read_csv(
+  "../04_analysis/simple_rules/results/simple_rules_aggregate_holdout_rmse_summary.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(method = "Simple")
+
+ets_rmse <- readr::read_csv(
+  "../04_analysis/ets/results/ets_holdout_rmse_summary.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(method = "ETS")
+
+
+arima_rmse <- tibble(
+ model = "ARIMA_best",
+ holdout_rmse = <value>,
+ n_holdout = <value>,
+ method = "ARIMA"
+)
+
+# ARMAX (TEMP placeholder — will be added after your section)
+# armax_rmse <- readr::read_csv("...") |> mutate(method = "ARMAX")
+
+rmse_all <- dplyr::bind_rows(
+  simple_rmse,
+  ets_rmse
+  arima_rmse,
+  armax_rmse
+)
+
+rmse_all <- rmse_all |>
+  dplyr::mutate(
+    model_full = paste(method, model, sep = " - ")
+  ) |>
+  dplyr::arrange(holdout_rmse)
+
+rmse_all
+```
+
+#### Interpretation
+
+The table above compares forecasting performance across all finalized models, where:
+
+- Lower RMSE indicates better predictive accuracy.  
+- Baseline models provide a benchmark for evaluating more complex approaches.  
+- Improvements over simple rules indicate that the more complex models successfully capture additional structure in the data.
+
+Let's visualize the comparisons.
+```{r}
+ggplot(rmse_all, aes(x = reorder(model_full, holdout_rmse), y = holdout_rmse)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Holdout RMSE Comparison Across Models",
+    x = "Model",
+    y = "RMSE"
+  )
+```
+#### Interpretation
+
+The bar chart above highlights differences in forecasting performance:
+
+- Models with substantially lower RMSE provide meaningful insights to how the target variable may be predicted.  
+- If complex models (ARIMA/ARMAX) only marginally outperform simple rules, their added complexity may not be justified.  
+- Large improvements suggest that time series structure and/or external variables are important.
+
+
+```{r}
+```
+
 
