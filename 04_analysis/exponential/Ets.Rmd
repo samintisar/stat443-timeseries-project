@@ -52,6 +52,10 @@ holdout_split <- tibble::tibble(
 
 holdout_split
 ```
+### Interpretation
+
+To evaluate forecasting performance fairly, the final 42 observations are reserved as a holdout set, corresponding to a six-week forecasting horizon. The ETS model is fit only on the earlier observations, and its predictions are then compared with the actual sales values in the holdout period. This allows us to assess how well the model would perform in a genuine out-of-sample forecasting setting.
+
 ```{r}
 ggplot(daily_data, aes(x = Date, y = Sales)) +
   geom_line() +
@@ -61,6 +65,9 @@ ggplot(daily_data, aes(x = Date, y = Sales)) +
     y = "Sales"
   )
 ```
+### Interpretation
+
+The aggregate daily sales series shows clear repeated fluctuations over time. In particular, a strong weekly pattern is visible, with regular sharp declines on certain days, likely reflecting weekends or days with very few stores open. This suggests that seasonality is an important feature of the data and supports the use of forecasting methods that can account for recurring weekly structure.
 
 ```{r}
 sales_ts <- ts(train_subset$Sales, frequency = 7)
@@ -72,6 +79,9 @@ ets_model <- ets(sales_ts)
 ets_model
 summary(ets_model)
 ```
+### Interpretation
+
+The selected model is **ETS(M,N,M)**, which means the model uses multiplicative errors, no trend, and multiplicative seasonality. This suggests that the aggregate sales series is mainly characterized by strong seasonal variation rather than a persistent long-term trend. The multiplicative seasonal structure is reasonable here because the size of fluctuations appears to depend on the overall sales level, with larger seasonal swings occurring when sales are higher.
 
 ```{r}
 ets_holdout_fc <- forecast(ets_model, h = holdout_horizon)
@@ -102,6 +112,7 @@ holdout_rmse_summary <- tibble::tibble(
 
 holdout_rmse_summary
 ```
+The holdout RMSE for the ETS model is **1,422,687**. This suggests that the model provides a reasonable representation of the weekly sales pattern, although the magnitude of forecast errors is still meaningful and leaves room for improvement through more flexible models.
 ```{r}
 ggplot(holdout_predictions, aes(x = Date)) +
   geom_line(aes(y = actual, color = "Actual")) +
