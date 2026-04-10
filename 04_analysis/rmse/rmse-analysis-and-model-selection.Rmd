@@ -6,6 +6,13 @@ output:
 date: "2026-04-09"
 ---
 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  warning = FALSE,
+  message = FALSE
+)
+```
+
 ## Goal
 
 This section will compare forecasting performance across all methods using holdout RMSE and select the final model.
@@ -19,13 +26,15 @@ Methods included:
 
 The primary evaluation metric is holdout RMSE, which reflects out-of-sample predictive accuracy.
 
-## RMSE Caluclations
+## RMSE Calculations
 The following computations complete RMSE calculations for models derived from previous analysis. We will apply RMSE calculations to all candidate forecasting models to decide on a best-performing model with smallest RMSE.
 
 **Step 1**: Setting up
 ```{r}
-library(tidyverse)
-library(forecast)
+suppressPackageStartupMessages({
+  suppressWarnings(library(tidyverse))
+  suppressWarnings(library(forecast))
+})
 
 agg <- readr::read_csv(
   "../../data/processed/store_type_a_train_aggregate_daily.csv",
@@ -42,25 +51,33 @@ n_train <- floor(0.8 * n_total)
 train_data <- y_all[1:n_train]
 test_data  <- y_all[(n_train + 1):n_total]
 holdout_idx <- (n_train + 1):n_total
+
+rmse_vec <- function(a, p) sqrt(mean((a - p)^2, na.rm = TRUE))
 ```
 
-**Step 2**: Pulling Simple and EST Models
+**Step 2**: Pulling Simple and ETS Models
 ```{r}
 simple_rmse <- readr::read_csv(
   "../../04_analysis/simple/results/simple_rules_aggregate_holdout_rmse_summary.csv"
 ) |>
   mutate(method = "Simple")
 
-ets_rmse <- readr::read_csv(
-  "../../04_analysis/exponential/results/ets_holdout_rmse_summary.csv"
-) |>
-  mutate(method = "ETS")
+sales_ts <- ts(train_data, frequency = 7)
+ets_model <- ets(sales_ts)
+ets_fc <- forecast(ets_model, h = length(test_data))$mean
+
+ets_rmse <- tibble(
+  model = "ETS",
+  holdout_rmse = rmse_vec(test_data, ets_fc),
+  n_holdout = length(test_data),
+  method = "ETS"
+)
 ```
 
 **Step 3**: ARIMA with Candidate Model Evaluation
-```{r}
-sales_ts <- ts(train_data, frequency = 7)
+The ARIMA candidates below were selected to complement `auto.arima` with nearby low-order seasonal specifications informed by weekly seasonality (frequency = 7), ACF/PACF patterns from earlier diagnostics, and AIC-oriented model comparison.
 
+```{r}
 model1 <- auto.arima(sales_ts)
 model2 <- Arima(sales_ts, order=c(4,0,1), seasonal=c(2,1,1))
 model3 <- Arima(sales_ts, order=c(4,0,1), seasonal=c(1,1,0))
@@ -74,8 +91,6 @@ models <- list(
   ARIMA_m4 = model4,
   ARIMA_m5 = model5
 )
-
-rmse_vec <- function(a, p) sqrt(mean((a - p)^2, na.rm = TRUE))
 
 arima_rmse_table <- purrr::imap_dfr(models, function(mod, name) {
 
@@ -94,10 +109,10 @@ arima_best <- arima_rmse_table |> slice(1)
 arima_best
 ```
 
-#### ARIMA Model Finalization:
+### ARIMA Model Finalization
 Based on the results above, the best ARIMA model out of all candidates is model 2 with RMSE = 1016497 (sale value). We will proceed with this model as a representative for the ARIMA method in the remaining analysis.
 
-**Step 4**: ARMAX 
+**Step 4**: ARMAX
 ```{r}
 armax_rmse <- readr::read_csv(
   "../../04_analysis/armax/results/armax_holdout_rmse_summary.csv",
@@ -123,7 +138,7 @@ rmse_all <- bind_rows(
 rmse_all
 ```
 
-#### Interpretation
+### Interpretation: RMSE Table
 Overall the table above compares forecasting performance across all finalized models, where:
 
 - Lower RMSE indicates better predictive accuracy.  
@@ -141,20 +156,22 @@ ggplot(rmse_all, aes(x = reorder(model_full, holdout_rmse), y = holdout_rmse)) +
     y = "RMSE"
   )
 ```
-#### Interpretation
+
+**Interpretation (RMSE Plot)**
 
 The bar chart above highlights differences in forecasting performance:
 
-- Models with substantially lower RMSE (e.g. ARMAX) provide insights to how the target variable may be predicted.  
-- If complex models (ARIMA/ARMAX) only marginally outperform simple rules, their added complexity may not be justified. Here ARMAX model significantly outperforms all other methods, and ARIMA improves forecast accuracy compare to most simple baseline models, with the exception of Simple IID by Period method outperforming most approaches.
-- Nonetheless, large improvements of more complex models overall suggest that time series structure and/or external variables are important in this scenario.
+- ARMAX substantially outperforms all other methods by a wide margin, making it the clear best-performing model in this comparison.
+- The large ARMAX gain is consistent with explanatory regressors (PromoShare, OpenStores, DayOfWeek, and Month) capturing demand drivers that univariate models cannot represent directly.
+- ARIMA improves over most simple baselines but remains close to `iid_by_period`, indicating that day-of-week averaging alone already captures much of the weekly structure.
+- The strong `iid_by_period` baseline result is plausible because averaging by day-of-week already captures much of the dominant weekly demand pattern, leaving limited additional gain for univariate ARIMA.
 
 ## Final Model Selection
 ```{r}
 best_model <- rmse_all |> slice_min(holdout_rmse, n = 1)
 best_model
 ```
-#### Interpretation
+### Interpretation: Final Model Choice
 The selected model is the one with the lowest holdout RMSE (ARMAX model with RMSE = 399947.5) meaning the model demonstrates the best out-of-sample forecasting performance among the candidates.
 
 ## Final Test Forecast
@@ -183,6 +200,8 @@ final_test <- readr::read_csv(
     Month = factor(Month, levels = 1:12)
   ) |>
   arrange(Date)
+
+colnames(final_test)
 
 xreg_train <- model.matrix(
   ~ PromoShare + OpenStores + DayOfWeek + Month,
@@ -217,20 +236,32 @@ final_forecast <- forecast(
 # Enforce non-negative sales
 final_forecast <- pmax(0, as.numeric(final_forecast))
 
-final_results <- tibble(
-  Date = final_test$Date,
-  actual = final_test$Sales,
-  predicted = final_forecast
-)
+test_target_col <- intersect(c("Sales", "sales"), colnames(final_test))
+
+if (length(test_target_col) == 1) {
+  final_results <- tibble(
+    Date = final_test$Date,
+    actual = final_test[[test_target_col]],
+    predicted = final_forecast
+  )
+
+  final_test_rmse <- sqrt(mean(
+    (final_results$actual - final_results$predicted)^2,
+    na.rm = TRUE
+  ))
+} else {
+  final_results <- tibble(
+    Date = final_test$Date,
+    predicted = final_forecast
+  )
+
+  final_test_rmse <- NA_real_
+  message("No actual sales column found in final_test; test RMSE cannot be computed from this file.")
+}
 
 head(final_results)
 
-final_test_rmse <- sqrt(mean(
-  (final_results$actual - final_results$predicted)^2,
-  na.rm = TRUE
-))
-
 final_test_rmse
 ```
-#### Interpretation
-The final model is evaluated on a completely unseen test dataset, which was not used at any stage of model selection or tuning. This ensures that the reported performance reflects true out-of-sample predictive ability. While holdout RMSE guided model selection within the training data, the test RMSE provides an unbiased estimate of how well the model generalizes to new data.
+### Interpretation: Test Forecast
+The final model is used to generate forecasts for a completely unseen test feature set. In the current aggregate test file, actual sales are not available, so a true test RMSE cannot be computed here. Holdout RMSE remains the valid basis for model comparison in this notebook; test RMSE requires a labeled test file with actual sales.

@@ -10,7 +10,7 @@ date: "2026-04-08"
 
 Apply exponential smoothing to the aggregate-daily Rossmann sales series and evaluate its forecasting performance using a holdout set.
 
-We compare the ETS model to the observed holdout period and report holdout RMSE.
+We compare a baseline ETS model and an STL+ETS alternative, then evaluate both on the same holdout period using RMSE.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
@@ -22,7 +22,7 @@ library(tidyverse)
 library(forecast)
 
 daily_data <- readr::read_csv(
-  "../../03_wrangling/daily_all_clean.csv",
+  "../../data/processed/store_type_a_train_aggregate_daily.csv",
   show_col_types = FALSE
 ) |>
   dplyr::mutate(
@@ -33,12 +33,15 @@ daily_data <- readr::read_csv(
 head(daily_data)
 ```
 ```{r}
-holdout_horizon <- 42
+set.seed(443)
+
+holdout_prop <- 0.20
 n_total <- nrow(daily_data)
-n_train <- n_total - holdout_horizon
+n_train <- floor((1 - holdout_prop) * n_total)
 
 train_subset <- daily_data |> dplyr::slice(1:n_train)
 holdout_subset <- daily_data |> dplyr::slice((n_train + 1):n_total)
+holdout_horizon <- nrow(holdout_subset)
 
 holdout_split <- tibble::tibble(
   n_total = n_total,
@@ -54,7 +57,7 @@ holdout_split
 ```
 ### Interpretation
 
-To evaluate forecasting performance fairly, the final 42 observations are reserved as a holdout set, corresponding to a six-week forecasting horizon. The ETS model is fit only on the earlier observations, and its predictions are then compared with the actual sales values in the holdout period. This allows us to assess how well the model would perform in a genuine out-of-sample forecasting setting.
+To evaluate forecasting performance fairly, we use an 80/20 chronological split: the first 80% of observations are used for model training, and the final 20% are reserved as holdout data. The ETS model is fit only on the training subset, and its forecasts are then compared with actual sales in the holdout period. This allows us to assess out-of-sample forecasting performance under the same split strategy used in the other analyses.
 
 ```{r}
 ggplot(daily_data, aes(x = Date, y = Sales)) +
@@ -85,11 +88,18 @@ The selected model is **ETS(M,N,M)**, which means the model uses multiplicative 
 
 ```{r}
 ets_holdout_fc <- forecast(ets_model, h = holdout_horizon)
+stl_model <- stlf(sales_ts, h = holdout_horizon)
 
 holdout_predictions <- tibble::tibble(
   Date = holdout_subset$Date,
   actual = holdout_subset$Sales,
   predicted = as.numeric(ets_holdout_fc$mean)
+)
+
+stl_holdout_predictions <- tibble::tibble(
+  Date = holdout_subset$Date,
+  actual = holdout_subset$Sales,
+  predicted = as.numeric(stl_model$mean)
 )
 
 head(holdout_predictions)
@@ -104,15 +114,21 @@ ets_holdout_rmse <- rmse_vec(
   pred = holdout_predictions$predicted
 )
 
+stl_rmse <- rmse_vec(
+  actual = holdout_subset$Sales,
+  pred = as.numeric(stl_model$mean)
+)
+
+ets_model_label <- as.character(ets_model$method)
+
 holdout_rmse_summary <- tibble::tibble(
-  model = "ETS",
-  holdout_rmse = ets_holdout_rmse,
-  n_holdout = nrow(holdout_predictions)
+  model = c(ets_model_label, "STL+ETS"),
+  holdout_rmse = c(ets_holdout_rmse, stl_rmse)
 )
 
 holdout_rmse_summary
 ```
-The holdout RMSE for the ETS model is **1,422,687**. This suggests that the model provides a reasonable representation of the weekly sales pattern, although the magnitude of forecast errors is still meaningful and leaves room for improvement through more flexible models.
+The RMSE table compares the baseline ETS model and STL+ETS under the same holdout split. In this run, **ETS(A,N,A)** performs better (lower RMSE) than **STL+ETS**. Although residual autocorrelation at seasonal lags motivated testing STL+ETS, the direct ETS specification remains the stronger choice for this dataset and split.
 ```{r}
 ggplot(holdout_predictions, aes(x = Date)) +
   geom_line(aes(y = actual, color = "Actual")) +
@@ -133,6 +149,7 @@ dir.create("results", showWarnings = FALSE, recursive = TRUE)
 
 readr::write_csv(holdout_split, "results/ets_holdout_split.csv")
 readr::write_csv(holdout_predictions, "results/ets_holdout_predictions.csv")
+readr::write_csv(stl_holdout_predictions, "results/stl_ets_holdout_predictions.csv")
 readr::write_csv(holdout_rmse_summary, "results/ets_holdout_rmse_summary.csv")
 
 ```
