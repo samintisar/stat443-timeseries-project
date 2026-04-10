@@ -55,11 +55,14 @@ We check whether the fitted model has removed most of the structure from the ser
 
 For ARIMA(4,0,1)(2,1,0)[7], the residuals are generally centered around zero, but there are still some noticeable large positive and negative spikes, suggesting the model does not fully explain all variation in sales. The residual ACF also shows several significant spikes, particularly around lags 13, 14, 21, 27, and 28, indicating that some weekly structure remains in the residuals. This suggests that although the model fits reasonably well, it does not completely capture the seasonal dynamics in the data.
 
-Top plot: the residuals fluctuate around zero overall, which is good, but there are several large spikes and periods of higher volatility, indicating the presence of outliers and remaining unexplained variation.
+**Top plot**: the residuals fluctuate around zero overall, which is good, but there are several large spikes and periods of higher volatility, indicating the presence of outliers and remaining unexplained variation.
 
-ACF plot: multiple spikes fall outside the significance bounds, especially around lags 13–14 and 27–28, which are close to multiples of the weekly cycle. This indicates that some seasonal dependence is still present.
+**ACF plot**: multiple spikes fall outside the significance bounds, especially around lags 13–14 and 27–28, which are close to multiples of the weekly cycle. This indicates that some seasonal dependence is still present.
 
-Histogram: the residuals are centered near zero and roughly bell-shaped, but with heavier tails due to extreme values, so the normality assumption is only approximately satisfied.
+**Histogram**: the residuals are centered near zero and roughly bell-shaped, but with heavier tails due to extreme values, so the normality assumption is only approximately satisfied.
+
+**Ljung-Box test result**: p-value = 2.2e10-16 (less than 0.05) → there is still some remaining pattern in the residuals, which tells us the model could potentially be improved and suggests we can perhaps try alternative models.
+
 
 Overall, the residual diagnostics suggest that ARIMA(4,0,1)(2,1,0)[7] captures much of the main structure, but there is still remaining seasonal autocorrelation, so alternative models could be considered for further improvement.
 ---
