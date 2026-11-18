@@ -1,0 +1,580 @@
+---
+title: "ROSSMANN STORE TYPE A SALES FORECASTING REPORT"
+author: "Samin Intisar, Jensen Suhenda, Shannon Sulistio, Yolanda Wu, Huaxi Zeng"
+date: "April 2026"
+fontsize: 12pt
+geometry: margin=1in
+output:
+  pdf_document:
+    number_sections: true
+    keep_tex: true
+  html_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+header-includes:
+  - \usepackage{setspace}
+  - \AtBeginDocument{\let\maketitle\relax}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{=latex}
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\LARGE \bfseries ROSSMANN STORE TYPE A SALES FORECASTING \par}
+\vspace{2cm}
+{\Large STAT 443 - Time Series \& Forecasting \par}
+\vspace{1.5cm}
+{\large
+Yolanda Wu\par
+Samin Intisar\par
+Shannon Sulistio\par
+Yolanda Wu\par
+Huaxi Zeng\par
+}
+\vfill
+{\large Department of Statistics\par
+University of British Columbia\par
+Vancouver, BC, Canada\par
+April 2026\par}
+\end{titlepage}
+\tableofcontents
+\newpage
+```
+
+# Abstract
+
+## Project Goal
+
+The goal of this project is to forecast aggregate daily Rossmann store sales and evaluate which time series forecasting method provides the most accurate predictions over a six-week forecasting horizon. The main research question is: Which forecasting model best predicts Rossmann daily sales among simple rules, exponential smoothing, ARIMA, and ARMAX/ARIMAX methods?
+
+The motivation for this project is that accurate sales forecasting is important for retail businesses because it can improve staffing decisions, inventory planning, and promotional management. Since Rossmann sales exhibit strong seasonal and operational patterns, forecasting models may help better capture these dynamics.
+
+## Project Outcome
+
+Our results suggest that simple rules such as persistence and average forecasts provide reasonable baseline predictions but have limited flexibility. Exponential smoothing improves forecasting performance by capturing weekly seasonal patterns in the sales data. ARIMA models further improve predictions by accounting for autocorrelation in the time series. Among all methods considered, ARMAX/ARIMAX models achieve the best forecasting performance, indicating that including explanatory variables improves prediction accuracy beyond purely time-series-based models.
+
+# Data Description
+
+## Data Collection and Scope
+
+**Data Source:** [Rossmann Store Sales | Kaggle ](https://www.kaggle.com/c/rossmann-store-sales/data) 
+**Project Repository:** [GitHub Repo](https://github.com/samintisar/stat443-timeseries-project)
+
+We are provided with historical sales data for 1,115 Rossmann stores. The original Rossmann setup is row-level Sales prediction for the test set, but this project intentionally narrows scope to **aggregate-daily Sales for Store Type A**. Note that some stores in the dataset were temporarily closed for refurbishment.
+
+### Raw Datasets
+
+- `train.csv` - historical data including Sales
+- `test.csv` - historical data excluding Sales
+- `sample_submission.csv` - original row-level competition format (reference only for this project)
+- `store.csv` - supplemental information about the stores
+
+### Data Fields
+
+Most of the fields are self-explanatory. The following are descriptions for those that aren't:
+
+- **Id** - an Id that represents a (Store, Date) duple within the test set (not the final prediction unit in this project)
+- **Store** - a unique Id for each store
+- **Sales** - the turnover for any given day; this project predicts the **sum of Sales across Store Type A per date**
+- **Customers** - the number of customers on a given day
+- **Open** - an indicator for whether the store was open: 0 = closed, 1 = open
+- **StateHoliday** - indicates a state holiday. Normally all stores, with few exceptions, are closed on state holidays. Note that all schools are closed on public holidays and weekends. a = public holiday, b = Easter holiday, c = Christmas, 0 = None
+- **SchoolHoliday** - indicates if the (Store, Date) was affected by the closure of public schools
+- **StoreType** - differentiates between 4 different store models: a, b, c, d
+- **Assortment** - describes an assortment level: a = basic, b = extra, c = extended
+- **CompetitionDistance** - distance in meters to the nearest competitor store
+- **CompetitionOpenSince[Month/Year]** - gives the approximate year and month of the time the nearest competitor was opened
+- **Promo** - indicates whether a store is running a promo on that day
+- **Promo2** - Promo2 is a continuing and consecutive promotion for some stores: 0 = store is not participating, 1 = store is participating
+- **Promo2Since[Year/Week]** - describes the year and calendar week when the store started participating in Promo2
+- **PromoInterval** - describes the consecutive intervals Promo2 is started, naming the months the promotion is started anew. E.g. "Feb,May,Aug,Nov" means each round starts in February, May, August, November of any given year for that store
+
+## Data Wrangling Pipeline
+
+The raw Rossmann dataset consists of daily sales records for individual stores along with store-level attributes. Since our analysis focuses on aggregate daily sales for Store Type "a", the data was preprocessed to create a consistent time series suitable for modeling.
+
+First, the `train` and `store` datasets were merged using the `Store` identifier to combine sales information with store characteristics. The data was then filtered to include only Store Type "a", ensuring consistency across all subsequent analyses.
+
+Next, the data was aggregated to the daily level by summing sales across all relevant stores for each date. This produced a univariate time series where each observation represents total daily sales across Store Type "a".
+
+To ensure a valid time series structure, the dataset was arranged in chronological order and missing dates were filled to create a continuous daily sequence. This step is important for time series models such as ARIMA, which assume evenly spaced observations.
+
+In addition to the aggregated sales series, we created two versions of the processed dataset:
+
+- A clean univariate dataset, containing only daily sales and time indices, used for baseline time series models such as ARIMA and exponential smoothing.
+- An extended dataset, which includes additional explanatory variables such as promotion and holiday indicators. These variables were aggregated as proportions across stores (for example, proportion of stores running promotions on a given day) to capture external factors that may influence sales. We also included calendar-based features like `DayOfWeek` and `IsWeekend` to capture temporal patterns in the data.
+
+Finally, all processed datasets were saved to a shared directory to ensure that all team members used a consistent input for modeling and evaluation.
+
+Table 3 shows a preview of the processed dataset (`store_type_a_train_aggregate_daily.csv`), which serves as the main input for the time series analysis.
+
+```{r table-3-processed-dataset}
+table3_preview <- readr::read_csv(
+  "../data/processed/store_type_a_train_aggregate_daily.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::transmute(
+    Date,
+    Sales,
+    Open = OpenStores,
+    PromoPct = round(PromoShare, 3),
+    SchoolHolPct = round(SchoolHolidayShare, 3),
+    DOW = DayOfWeek,
+    Month,
+    Weekend = IsWeekend
+  ) |>
+  dplyr::slice_head(n = 6)
+
+knitr::kable(
+  table3_preview,
+  caption = "Preview of processed dataset (store_type_a_train_aggregate_daily.csv).",
+  align = c("l", rep("r", 7))
+)
+```
+
+## Exploratory Data Analysis (EDA)
+
+We are doing an Exploratory Data Analysis on Store Type "a". Here are the key questions we consider to justify modeling choices later in the report:
+
+- What does the sales data look like? Is it stable, trending up/down, or highly volatile?
+- Is there a pattern? Do sales repeat weekly or monthly?
+- What affects sales? Do promo, competition, and day-of-week matter?
+- Is the series stationary? This informs ARIMA differencing choices.
+
+### Variables used in EDA
+
+The EDA primarily uses the processed training datasets:
+
+- `Date`: calendar date for each daily observation.
+- `Sales`: aggregate daily sales across all Store Type "a" stores (main response series).
+- `PromoShare`: proportion of stores with active promotions on a given date.
+- `OpenStores`: number of open Store Type "a" stores on each date.
+- `SchoolHolidayShare`: proportion of stores affected by school holidays.
+- `DayOfWeek`, `Month`, `IsoWeek`, `IsWeekend`: calendar variables used to assess recurring patterns.
+- `CompetitionDistance` (from store-level processed data): used for the competition-sales relationship check.
+
+```{r eda-setup, include=FALSE}
+library(tidyverse)
+library(forecast)
+library(tseries)
+
+agg <- readr::read_csv(
+  "../data/processed/store_type_a_train_aggregate_daily.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(Date = as.Date(Date)) |>
+  dplyr::arrange(Date)
+
+store_daily <- readr::read_csv(
+  "../data/processed/store_type_a_train_store_daily.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(Date = as.Date(Date))
+```
+
+### Summary of data
+
+Basic statistics of aggregated daily sales across all stores help us understand the range and distribution of sales.
+
+```{r eda-summary-stats}
+sales_summary <- summary(agg$Sales)
+
+summary_tbl <- tibble::tibble(
+  Statistic = names(sales_summary),
+  Value = as.numeric(sales_summary)
+)
+
+knitr::kable(summary_tbl, caption = "Summary statistics for aggregate daily sales (Store Type a).")
+```
+
+Based on Figure 2.1, daily total sales for Store Type "a" range from 680 to about 8.5 million, with a median around 3.6 million and mean around 3.5 million. Since the mean and median are very close, the distribution appears fairly symmetric. The minimum value (680) is very low and likely corresponds to a day where almost all Type "a" stores were closed.
+
+### Date continuity check
+
+This check was included in the original EDA file and confirms the daily series is complete over the observed range.
+
+```{r eda-date-continuity}
+date_span <- as.integer(max(agg$Date) - min(agg$Date)) + 1
+missing_days <- date_span - nrow(agg)
+
+tibble::tibble(
+  first_date = min(agg$Date),
+  last_date = max(agg$Date),
+  expected_days = date_span,
+  observed_days = nrow(agg),
+  missing_days = missing_days
+) |>
+  knitr::kable(caption = "Date continuity check for aggregate daily series.")
+```
+
+### Plot of total daily sales for Store Type "a" over dates
+
+We want to understand whether there is trend, visible seasonality, and potential outliers.
+
+```{r eda-sales-series, fig.width=11, fig.height=4}
+ggplot(agg, aes(x = Date, y = Sales)) +
+  geom_line(color = "steelblue") +
+  labs(
+    title = "Total Daily Sales - Store Type A",
+    x = "Date",
+    y = "Sales"
+  )
+```
+
+Based on Figure 2.2, we observe:
+
+- Strong weekly seasonality, with repeating spikes and dips throughout the series.
+- No clear long-run upward or downward trend; overall level appears relatively stable across 2013 to 2015.
+- Some outlier spikes around early 2014, potentially linked to holidays or special events.
+- Some near-zero drops, likely corresponding to Sundays or holidays when most stores were closed.
+
+### Compare average sales of Store Type "a" on promo vs non-promo days
+
+If mean sales are higher on promo days, this supports including promotion signals in later ARMAX models.
+
+```{r eda-promo-comparison}
+promo_summary <- agg |>
+  dplyr::mutate(PromoDay = if_else(PromoShare > 0, 1L, 0L)) |>
+  dplyr::group_by(PromoDay) |>
+  dplyr::summarise(
+    mean_sales = mean(Sales, na.rm = TRUE),
+    sd_sales = sd(Sales, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+knitr::kable(
+  promo_summary,
+  caption = "Average daily sales on promo vs non-promo days (PromoDay: 1 = promo, 0 = non-promo)."
+)
+```
+
+From Figure 2.3, non-promo days have substantially lower mean sales than promo days, with promo-day mean sales being close to double in magnitude. This supports including promotion-related predictors in the ARMAX specification.
+
+### Day-of-week effect
+
+```{r eda-day-of-week, fig.width=8, fig.height=4}
+dow_summary <- agg |>
+  dplyr::filter(Sales > 0) |>
+  dplyr::group_by(DayOfWeek) |>
+  dplyr::summarise(mean_sales = mean(Sales, na.rm = TRUE), .groups = "drop")
+
+ggplot(dow_summary, aes(x = factor(DayOfWeek), y = mean_sales)) +
+  geom_col(fill = "#2E6F95") +
+  labs(
+    title = "Average Sales by Day of Week",
+    x = "DayOfWeek (1 = Monday, 7 = Sunday)",
+    y = "Mean Sales"
+  )
+```
+
+### Scatter plot of competition distance vs mean sales for Store Type "a"
+
+```{r eda-competition-distance, fig.width=10, fig.height=4.5}
+store_daily |>
+  dplyr::filter(Open == 1, Sales > 0, !is.na(CompetitionDistance)) |>
+  dplyr::group_by(Store) |>
+  dplyr::summarise(
+    mean_sales = mean(Sales, na.rm = TRUE),
+    CompetitionDistance = dplyr::first(CompetitionDistance),
+    .groups = "drop"
+  ) |>
+  ggplot(aes(x = CompetitionDistance, y = mean_sales)) +
+  geom_point(alpha = 0.35) +
+  geom_smooth(method = "lm", se = TRUE, color = "#2B5DAA") +
+  labs(
+    title = "Competition Distance vs Mean Sales - Store Type A",
+    x = "CompetitionDistance",
+    y = "mean_sales"
+  )
+```
+
+As shown in Figure 2.4, the fitted line slopes downward, suggesting a negative relationship between competition distance and mean sales. The relationship appears weak because points are widely dispersed, so `CompetitionDistance` is likely a marginal explanatory feature rather than a dominant driver.
+
+### ACF and PACF plots for Store Type "a"
+
+ACF shows how correlated today's sales are with values from previous days. Spikes at lags 7, 14, 21, and 28 indicate weekly seasonality.
+
+```{r eda-acf, fig.width=11, fig.height=4}
+sales_ts <- ts(agg$Sales, frequency = 7)
+acf(agg$Sales, lag.max = 60, main = "ACF - Store Type A")
+```
+
+In Figure 2.5.1, clear spikes at multiples of 7 confirm strong weekly seasonality. This supports a seasonal ARIMA component with period 7.
+
+PACF shows partial correlation at each lag after accounting for shorter lags, which helps identify AR order.
+
+```{r eda-pacf, fig.width=11, fig.height=4}
+pacf(agg$Sales, lag.max = 60, main = "PACF - Store Type A")
+```
+
+In Figure 2.5.2, notable spikes around seasonal lags (for example 7 and 14), with most other lags within confidence bounds, suggest a low-order seasonal AR structure is reasonable for ARIMA candidates.
+
+### STL decomposition
+
+STL splits the series into three components:
+
+1. Trend: long-term direction.
+2. Seasonal: repeating weekly pattern.
+3. Remainder: what is left after removing trend and seasonality.
+
+```{r eda-stl, fig.width=11, fig.height=7}
+stl_fit <- stl(sales_ts, s.window = "periodic")
+plot(stl_fit)
+```
+
+Based on Figure 2.6:
+
+- Data: raw series with full variation.
+- Trend: relatively flat overall, with a noticeable spike around early 2014.
+- Seasonal: strong, consistent weekly pattern across the full period.
+- Remainder: mostly noise around zero with a few larger spikes.
+
+### Augmented Dickey-Fuller and KPSS test
+
+ADF tests stationarity with null hypothesis of non-stationarity:
+
+- $p < 0.05$: stationary.
+- $p > 0.05$: non-stationary.
+
+KPSS is interpreted in the opposite direction:
+
+- $p > 0.05$: stationary.
+- $p < 0.05$: non-stationary.
+
+```{r eda-stationarity-tests}
+adf_result <- tseries::adf.test(agg$Sales)
+kpss_result <- tseries::kpss.test(agg$Sales)
+
+stationarity_tbl <- tibble::tibble(
+  Test = c("ADF", "KPSS"),
+  Statistic = c(unname(adf_result$statistic), unname(kpss_result$statistic)),
+  `p-value` = c(adf_result$p.value, kpss_result$p.value)
+) |>
+  dplyr::mutate(
+    Statistic = round(Statistic, 3),
+    `p-value` = signif(`p-value`, 3),
+    Decision = dplyr::case_when(
+      Test == "ADF" & `p-value` < 0.05 ~ "Stationary (reject H0)",
+      Test == "ADF" ~ "Non-stationary (fail to reject H0)",
+      Test == "KPSS" & `p-value` > 0.05 ~ "Stationary (fail to reject H0)",
+      TRUE ~ "Non-stationary (reject H0)"
+    )
+  )
+
+knitr::kable(
+  stationarity_tbl,
+  caption = "Stationarity test summary for aggregate daily sales.",
+  align = c("l", "r", "r", "l")
+)
+```
+
+The stationarity test summary shows that ADF supports stationarity while KPSS also supports stationarity under its opposite null definition. Since both tests align, a non-seasonal differencing order of $d = 0$ is a reasonable starting point for ARIMA candidates.
+
+### EDA implications for modeling
+
+To preserve key points from the original EDA file, we summarize the direct implications:
+
+- Strong weekly behavior supports seasonal terms with period 7.
+- Promotion and calendar effects support including exogenous regressors in ARMAX.
+- Stationarity diagnostics suggest limited need for non-seasonal differencing.
+
+# Methods
+
+## Simple Rules Baselines
+
+We compare four aggregate-daily baseline forecasts for Store Type A using a common chronological 80/20 holdout split (first 80% train, last 20% holdout): global average, persistence (last observation), persistence by period (same day previous week), and IID by period (historical mean for the same day-of-week). Holdout predictions are generated for each method and evaluated with RMSE to establish benchmark performance before moving to more complex models.
+
+## Exponential Smoothing (ETS)
+
+Exponential smoothing is fit on the same training subset as above, with weekly frequency ($m=7$). We evaluate both a direct ETS model and an STL+ETS alternative on the same holdout horizon, then compare holdout RMSE. This framework tests whether explicit seasonal decomposition improves forecasts relative to a direct ETS specification for the aggregate daily series.
+
+## ARIMA
+
+ARIMA modeling starts with automated identification using `auto.arima` on the aggregate daily series (weekly seasonality). Because the lowest-AIC model is not always the best forecasting model, we also fit alternative candidate specifications motivated by residual diagnostics, especially remaining seasonal autocorrelation at lags near multiples of 7. Candidate models are compared by AIC, and residual checks (ACF behavior, distribution shape, and Ljung-Box test) are used to assess whether residuals are close to white noise.
+
+## ARMAX
+
+ARMAX extends ARIMA by including exogenous predictors constructed in wrangling and EDA: `PromoShare`, `OpenStores`, and calendar effects (`DayOfWeek`, `Month`). Using the same chronological holdout split, we define multiple candidate formulas of increasing complexity, fit each model on the training set, and use train AIC as an initial filter. The selected specification is then evaluated with fixed-coefficient 1-step holdout forecasts and RMSE, followed by residual diagnostics; finally, the best ARMAX model is refit on full training data to produce aggregate-daily test forecasts.
+
+# Results
+
+## Holdout Evaluation Design
+
+All candidate methods are evaluated using the same chronological 80/20 split on the aggregate Store Type A training series: the first 80% of days are used for model fitting and the final 20% are held out for evaluation. This produces a common holdout of 189 observations, so RMSE comparisons are on the same time window across methods.
+
+To keep comparison fairness, ETS RMSE is recomputed on this same 189-day holdout in this report (rather than using earlier intermediate output computed on a shorter window).
+
+The main limitation is that this is a single holdout split rather than rolling-origin cross-validation, so results are sensitive to this specific split date. In addition, the provided aggregate test feature file has no `Sales` column, so true test RMSE cannot be computed from that file.
+
+```{r results-holdout-setup, include=FALSE}
+agg_results <- readr::read_csv(
+  "../data/processed/store_type_a_train_aggregate_daily.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(Date = as.Date(Date)) |>
+  dplyr::arrange(Date)
+
+y_all_results <- agg_results$Sales
+n_total_results <- length(y_all_results)
+n_train_results <- floor(0.8 * n_total_results)
+
+train_data_results <- y_all_results[1:n_train_results]
+test_data_results <- y_all_results[(n_train_results + 1):n_total_results]
+
+rmse_vec <- function(a, p) sqrt(mean((a - p)^2, na.rm = TRUE))
+
+simple_rmse <- readr::read_csv(
+  "../04_analysis/simple/results/simple_rules_aggregate_holdout_rmse_summary.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(method = "Simple")
+
+sales_ts_results <- ts(train_data_results, frequency = 7)
+
+ets_model_results <- forecast::ets(sales_ts_results)
+ets_fc_results <- forecast::forecast(ets_model_results, h = length(test_data_results))$mean
+
+ets_rmse <- tibble::tibble(
+  model = "ETS",
+  holdout_rmse = rmse_vec(test_data_results, ets_fc_results),
+  n_holdout = length(test_data_results),
+  method = "ETS"
+)
+
+arima_model1 <- forecast::auto.arima(sales_ts_results)
+arima_model2 <- forecast::Arima(sales_ts_results, order = c(4, 0, 1), seasonal = c(2, 1, 1))
+arima_model3 <- forecast::Arima(sales_ts_results, order = c(4, 0, 1), seasonal = c(1, 1, 0))
+arima_model4 <- forecast::Arima(sales_ts_results, order = c(2, 0, 1), seasonal = c(2, 1, 0))
+arima_model5 <- forecast::Arima(sales_ts_results, order = c(4, 0, 2), seasonal = c(2, 1, 0))
+
+arima_models <- list(
+  ARIMA_auto = arima_model1,
+  ARIMA_m2 = arima_model2,
+  ARIMA_m3 = arima_model3,
+  ARIMA_m4 = arima_model4,
+  ARIMA_m5 = arima_model5
+)
+
+arima_rmse_table <- purrr::imap_dfr(arima_models, function(mod, name) {
+  fc <- forecast::forecast(mod, h = length(test_data_results))$mean
+
+  tibble::tibble(
+    model = name,
+    holdout_rmse = rmse_vec(test_data_results, fc),
+    n_holdout = length(test_data_results),
+    method = "ARIMA"
+  )
+}) |>
+  dplyr::arrange(holdout_rmse)
+
+arima_best <- arima_rmse_table |>
+  dplyr::slice(1)
+
+armax_rmse <- readr::read_csv(
+  "../04_analysis/armax/results/armax_holdout_rmse_summary.csv",
+  show_col_types = FALSE
+) |>
+  dplyr::mutate(method = "ARMAX")
+
+rmse_all <- dplyr::bind_rows(
+  simple_rmse,
+  ets_rmse,
+  arima_best,
+  armax_rmse
+) |>
+  dplyr::mutate(model_full = paste(method, model, sep = " - ")) |>
+  dplyr::arrange(holdout_rmse)
+
+best_model <- rmse_all |>
+  dplyr::slice_min(holdout_rmse, n = 1)
+
+final_test_cols <- readr::read_csv(
+  "../data/processed/store_type_a_test_aggregate_daily.csv",
+  show_col_types = FALSE
+) |>
+  names()
+
+has_test_sales <- "Sales" %in% final_test_cols
+```
+
+## RMSE Comparison Across Methods
+
+Table 4.2 compares holdout RMSE across Simple Rules, ETS, ARIMA, and ARMAX under the same 189-day holdout window.
+
+```{r results-rmse-table}
+rmse_all |>
+  dplyr::select(method, model, holdout_rmse, n_holdout) |>
+  dplyr::mutate(
+    holdout_rmse = round(holdout_rmse, 1),
+    n_holdout = as.integer(n_holdout)
+  ) |>
+  knitr::kable(
+    caption = "Holdout RMSE comparison across finalized methods (common holdout window).",
+    align = c("l", "l", "r", "r")
+  )
+```
+
+```{r results-rmse-plot, fig.width=9, fig.height=4.5}
+ggplot(rmse_all, aes(x = reorder(model_full, holdout_rmse), y = holdout_rmse, fill = method)) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  labs(
+    title = "Holdout RMSE Comparison (All Methods)",
+    x = "Model",
+    y = "RMSE"
+  )
+```
+
+ARMAX substantially outperforms all other methods and is the clear best-performing approach in this comparison. The size of this RMSE gap is consistent with exogenous regressors (`PromoShare`, `OpenStores`, `DayOfWeek`, `Month`) contributing predictive information not available to univariate models.
+
+ARIMA improves over most simple-rule baselines, but remains close to `iid_by_period`, which suggests that day-of-week averaging already captures a large share of the weekly demand structure.
+
+## Final Model Selection and Test Forecast
+
+The selected final model is the lowest-RMSE candidate from the holdout table above.
+
+```{r results-best-model}
+best_model |>
+  dplyr::select(method, model, holdout_rmse, n_holdout) |>
+  dplyr::mutate(holdout_rmse = round(holdout_rmse, 1)) |>
+  knitr::kable(
+    caption = "Selected final model by holdout RMSE.",
+    align = c("l", "l", "r", "r")
+  )
+```
+
+Final aggregate-daily forecasts for the test horizon have been generated by the selected ARMAX pipeline:
+
+```{r results-test-forecast-preview}
+final_test_forecast <- readr::read_csv(
+  "../04_analysis/armax/results/armax_aggregate_test_forecast.csv",
+  show_col_types = FALSE
+)
+
+final_test_forecast |>
+  dplyr::slice_head(n = 10) |>
+  dplyr::mutate(predicted_aggregate_sales = round(predicted_aggregate_sales, 1)) |>
+  knitr::kable(
+    caption = "First 10 aggregate-daily forecasts for the test horizon.",
+    align = c("l", "r")
+  )
+```
+
+The aggregate test file does not contain observed `Sales` values, so true test RMSE cannot be computed. Nonetheless, ARMAX demonstrates the best holdout performance and is the most defensible production choice among tested methods for aggregate Store Type A forecasting.
+
+# Conclusion
+
+This project compared several forecasting methods for aggregate daily Rossmann sales using the Rossmann Store Sales dataset, including simple benchmark rules, exponential smoothing, ARIMA, and ARMAX models. Model performance was evaluated using holdout-set RMSE to compare predictive accuracy.
+
+Among the models considered, the strongest univariate forecasting performance was achieved by the selected ARIMA model, which outperformed most simple benchmark methods and exponential smoothing by better capturing autocorrelation and seasonal dependence in the sales series. However, the best overall forecasting performance was achieved by the ARMAX specification that included promotional, operational, and calendar-based explanatory variables. This suggests that Rossmann sales are influenced not only by historical time series patterns but also by external business and calendar factors.
+
+Overall, the findings indicate that incorporating exogenous predictors substantially improves forecasting accuracy relative to purely univariate time series methods. Future improvements may be achieved by exploring additional explanatory variables or alternative model specifications to further reduce residual dependence.
